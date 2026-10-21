@@ -1,0 +1,12 @@
+{
+  "watch": [
+    "src",
+    "config"
+  ],
+  "ext": "ts,js,json,html",
+  "ignore": [
+    "node_modules"
+  ],
+  "exec": "npx kill-port 30012 && npx tsx src/index.ts",
+  "signal": "SIGTERM"
+}

@@ -1,0 +1,1 @@
+cd "D:\1-WorkFile\program\gitStatus" && npm run dev

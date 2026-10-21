@@ -1,0 +1,7 @@
+{
+  "allowedOrigins": [
+    "http://localhost:65123"
+  ],
+  "jwtSecret": "gitstatus-default-secret-please-change",
+  "jwtExpiresIn": "7d"
+}
