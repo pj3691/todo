@@ -1,0 +1,10 @@
+src/output/*
+node_modules/*
+node_modules
+pages/
+
+# 运行时日志
+debug.log
+
+# 本地二进制工具（通过 GLTFPACK_BIN 环境变量或系统 PATH 指定）
+src/tools/gltfpack.exe
