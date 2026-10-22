@@ -128,6 +128,9 @@ GET /todos
 | `type` | `once` / `daily` |
 | `status` | `pending` / `completed` |
 | `view` | `all` / `today` / `inbox` |
+| `inbox` | 传 `1` 或 `true` 时只查询收件箱任务，可与 `view=today` 组合 |
+
+`view=today` 会按 `date` 选择当天待办：每日任务在有效区间内出现；有截止日期的单次任务只出现在截止日期，已完成时也会出现在完成日期；无截止日期的未完成单次任务只在其创建日期及之后出现，已完成时只出现在完成日期。
 | `search` | 搜索标题和描述 |
 | `page` | 页码，默认 1 |
 | `pageSize` | 每页数量，默认 200，最大 500 |
@@ -385,6 +388,9 @@ DELETE /todos/:id/images/:imageId
 会同时删除数据库记录和磁盘文件。
 
 图片文件保存在 `src/output/todo-images/<userId>/`，该目录已经被 `.gitignore` 中的 `src/output/*` 排除。
+
+
+
 
 
 

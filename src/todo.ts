@@ -10,9 +10,284 @@ type TodoFeatureOptions = {
   db: Database.Database;
   apiPrefix: string;
   authMiddleware: express.RequestHandler;
+  /** 写操作守卫：只读角色在 POST/PATCH/PUT/DELETE 时会被拒绝 */
+  requireWrite: express.RequestHandler;
   logInfo: (message: string) => void;
   logWarn: (message: string) => void;
   logError: (message: string, error?: unknown) => void;
+};
+
+const todoImagesDir = path.resolve("./src/output/todo-images");
+
+/** 删除指定用户的全部待办图片文件（用户被删除时调用） */
+export const removeTodoImagesForUser = (userId: number): void => {
+  if (!Number.isInteger(userId) || userId <= 0) return;
+  try {
+    fs.rmSync(path.join(todoImagesDir, String(userId)), {
+      recursive: true,
+      force: true,
+    });
+  } catch {
+    // 文件清理失败不影响用户删除结果
+  }
+};
+
+export type TodoTransferStats = {
+  categories: number;
+  tags: number;
+  todos: number;
+  images: number;
+};
+
+/**
+ * 将源用户的全部待办数据迁移给目标用户。
+ * - 分类按层级重建；目标用户已有同名同级分类时直接复用
+ * - 标签同名时复用目标标签，并合并重复的待办-标签关联
+ * - 待办与图片只改归属用户，记录 ID 保持不变
+ * - 图片文件从事务提交后从源目录移动到目标目录
+ */
+export const transferTodoData = (
+  db: Database.Database,
+  sourceUserId: number,
+  targetUserId: number,
+): TodoTransferStats => {
+  if (sourceUserId === targetUserId) {
+    throw new Error("source and target user must differ");
+  }
+
+  const selectCategoriesStmt = db.prepare(
+    `SELECT id, parent_id, name, color, sort_order, created_at, updated_at
+     FROM todo_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC`,
+  );
+  const findCategorySiblingStmt = db.prepare(
+    `SELECT id FROM todo_categories
+     WHERE user_id = ? AND IFNULL(parent_id, 0) = IFNULL(?, 0)
+       AND name = ? COLLATE NOCASE LIMIT 1`,
+  );
+  const insertCategoryStmt = db.prepare(
+    `INSERT INTO todo_categories
+     (user_id, parent_id, name, color, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  const selectTagsStmt = db.prepare(
+    `SELECT id, name, color, created_at, updated_at
+     FROM todo_tags WHERE user_id = ? ORDER BY id ASC`,
+  );
+  const findTagStmt = db.prepare(
+    `SELECT id FROM todo_tags
+     WHERE user_id = ? AND name = ? COLLATE NOCASE LIMIT 1`,
+  );
+  const insertTagStmt = db.prepare(
+    `INSERT INTO todo_tags (user_id, name, color, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+
+  const selectTodosStmt = db.prepare(
+    `SELECT id, category_id FROM todos WHERE user_id = ?`,
+  );
+  const updateTodoStmt = db.prepare(
+    `UPDATE todos SET user_id = ?, category_id = ?
+     WHERE id = ? AND user_id = ?`,
+  );
+
+  const selectImagesStmt = db.prepare(
+    `SELECT id, stored_name FROM todo_images WHERE user_id = ?`,
+  );
+  const updateImageStmt = db.prepare(
+    `UPDATE todo_images SET user_id = ? WHERE id = ?`,
+  );
+
+  const selectTagLinkConflictsStmt = db.prepare(
+    `SELECT todo_id FROM todo_tag_links
+     WHERE tag_id = ?
+       AND todo_id IN (SELECT todo_id FROM todo_tag_links WHERE tag_id = ?)`,
+  );
+  const deleteTagLinkStmt = db.prepare(
+    `DELETE FROM todo_tag_links WHERE todo_id = ? AND tag_id = ?`,
+  );
+  const updateTagLinksStmt = db.prepare(
+    `UPDATE todo_tag_links SET tag_id = ? WHERE tag_id = ?`,
+  );
+
+  const categoryRows = selectCategoriesStmt.all(sourceUserId) as Array<{
+    id: number;
+    parent_id: number | null;
+    name: string;
+    color: string;
+    sort_order: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+  const tagRows = selectTagsStmt.all(sourceUserId) as Array<{
+    id: number;
+    name: string;
+    color: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  const imageRows = selectImagesStmt.all(sourceUserId) as Array<{
+    id: number;
+    stored_name: string;
+  }>;
+
+  let todoCount = 0;
+
+  const migrate = db.transaction(() => {
+    // 1. 分类：按层级迁移，同名同级分类复用目标用户已有记录
+    const categoryMap = new Map<number, number>();
+    const pending = [...categoryRows];
+    let guard = pending.length + 1;
+    while (pending.length > 0 && guard > 0) {
+      guard -= 1;
+      let progressed = false;
+      for (let i = pending.length - 1; i >= 0; i -= 1) {
+        const row = pending[i]!;
+        if (row.parent_id !== null && !categoryMap.has(row.parent_id)) continue;
+
+        const newParentId =
+          row.parent_id === null ? null : categoryMap.get(row.parent_id) ?? null;
+        const existing = findCategorySiblingStmt.get(
+          targetUserId,
+          newParentId,
+          row.name,
+        ) as { id: number } | undefined;
+
+        let newId: number;
+        if (existing) {
+          newId = existing.id;
+        } else {
+          const info = insertCategoryStmt.run(
+            targetUserId,
+            newParentId,
+            row.name,
+            row.color,
+            row.sort_order,
+            row.created_at,
+            row.updated_at,
+          );
+          newId = Number(info.lastInsertRowid);
+        }
+        categoryMap.set(row.id, newId);
+        pending.splice(i, 1);
+        progressed = true;
+      }
+      // 父级缺失或存在环时，将剩余分类作为根分类迁移
+      if (!progressed) break;
+    }
+    for (const row of pending) {
+      const existing = findCategorySiblingStmt.get(
+        targetUserId,
+        null,
+        row.name,
+      ) as { id: number } | undefined;
+      let newId: number;
+      if (existing) {
+        newId = existing.id;
+      } else {
+        const info = insertCategoryStmt.run(
+          targetUserId,
+          null,
+          row.name,
+          row.color,
+          row.sort_order,
+          row.created_at,
+          row.updated_at,
+        );
+        newId = Number(info.lastInsertRowid);
+      }
+      categoryMap.set(row.id, newId);
+    }
+
+    // 2. 标签：同名标签复用，重复的待办关联先清理再合并
+    const tagMap = new Map<number, number>();
+    for (const row of tagRows) {
+      const existing = findTagStmt.get(targetUserId, row.name) as
+        | { id: number }
+        | undefined;
+      let newId: number;
+      if (existing) {
+        newId = existing.id;
+      } else {
+        const info = insertTagStmt.run(
+          targetUserId,
+          row.name,
+          row.color,
+          row.created_at,
+          row.updated_at,
+        );
+        newId = Number(info.lastInsertRowid);
+      }
+      tagMap.set(row.id, newId);
+
+      if (newId !== row.id) {
+        const conflicts = selectTagLinkConflictsStmt.all(row.id, newId) as Array<{
+          todo_id: number;
+        }>;
+        for (const conflict of conflicts) {
+          deleteTagLinkStmt.run(conflict.todo_id, row.id);
+        }
+        updateTagLinksStmt.run(newId, row.id);
+      }
+    }
+
+    // 3. 待办：保持 ID 不变，仅改归属用户与分类映射
+    const todoRows = selectTodosStmt.all(sourceUserId) as Array<{
+      id: number;
+      category_id: number | null;
+    }>;
+    for (const row of todoRows) {
+      const newCategoryId =
+        row.category_id === null
+          ? null
+          : categoryMap.get(row.category_id) ?? null;
+      updateTodoStmt.run(targetUserId, newCategoryId, row.id, sourceUserId);
+      todoCount += 1;
+    }
+
+    // 4. 图片元数据：记录 ID 不变，仅改归属用户
+    for (const row of imageRows) {
+      updateImageStmt.run(targetUserId, row.id);
+    }
+
+    // 5. 清空源用户的分类与标签（待办、图片已改归属，标签关联已合并）
+    db.prepare("UPDATE todo_categories SET parent_id = NULL WHERE user_id = ?").run(
+      sourceUserId,
+    );
+    db.prepare("DELETE FROM todo_categories WHERE user_id = ?").run(sourceUserId);
+    db.prepare("DELETE FROM todo_tags WHERE user_id = ?").run(sourceUserId);
+
+    return {
+      categories: categoryRows.length,
+      tags: tagRows.length,
+      todos: todoCount,
+      images: imageRows.length,
+    } satisfies TodoTransferStats;
+  });
+
+  const stats = migrate();
+
+  // 5. 图片文件移动放在事务提交之后，避免回滚后文件位置与元数据不一致
+  const sourceDir = path.join(todoImagesDir, String(sourceUserId));
+  const targetDir = path.join(todoImagesDir, String(targetUserId));
+  try {
+    fs.mkdirSync(targetDir, { recursive: true });
+  } catch {
+    // 目录创建失败时由下方逐文件移动兜底
+  }
+  for (const row of imageRows) {
+    const sourcePath = path.join(sourceDir, row.stored_name);
+    const targetPath = path.join(targetDir, row.stored_name);
+    try {
+      if (!fs.existsSync(sourcePath)) continue;
+      if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+      fs.renameSync(sourcePath, targetPath);
+    } catch {
+      // 单个文件移动失败不影响整体迁移结果
+    }
+  }
+
+  return stats;
 };
 
 type AuthedRequest = express.Request & {
@@ -410,7 +685,17 @@ export const registerTodoFeature = (
   app: express.Express,
   options: TodoFeatureOptions,
 ): void => {
-  const { db, apiPrefix, authMiddleware, logInfo, logWarn, logError } = options;
+  const { db, apiPrefix, authMiddleware, requireWrite, logInfo, logWarn, logError } =
+    options;
+
+  /** 待办模块的写操作统一要求读写及以上角色，GET 类请求不受限制 */
+  const writeGuard: express.RequestHandler = (req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+      next();
+      return;
+    }
+    requireWrite(req, res, next);
+  };
 
   db.pragma("foreign_keys = ON");
 
@@ -761,7 +1046,7 @@ export const registerTodoFeature = (
     `INSERT OR IGNORE INTO todo_notification_logs
      (reminder_id, scheduled_for, sent_at, channel, status, error, created_at)
      VALUES (?, ?, ?, 'windows', ?, ?, ?)`,
-  );  const todoImagesDir = path.resolve("./src/output/todo-images");
+  );
   if (!fs.existsSync(todoImagesDir)) {
     fs.mkdirSync(todoImagesDir, { recursive: true });
   }
@@ -917,6 +1202,7 @@ export const registerTodoFeature = (
   };  // Category API
   const categoryRouter = express.Router();
   categoryRouter.use(authMiddleware);
+  categoryRouter.use(writeGuard);
 
   categoryRouter.get("/", (req, res) => {
     try {
@@ -1034,6 +1320,7 @@ export const registerTodoFeature = (
   });  // Tag API
   const tagRouter = express.Router();
   tagRouter.use(authMiddleware);
+  tagRouter.use(writeGuard);
 
   tagRouter.get("/", (req, res) => {
     try {
@@ -1103,6 +1390,7 @@ export const registerTodoFeature = (
   });  // Todo API
   const todoRouter = express.Router();
   todoRouter.use(authMiddleware);
+  todoRouter.use(writeGuard);
 
   todoRouter.get("/", (req, res) => {
     try {
@@ -1127,6 +1415,9 @@ export const registerTodoFeature = (
       if (viewRaw && !["all", "today", "inbox"].includes(viewRaw)) {
         fail(400, "view must be all, today or inbox");
       }
+      const inboxOnly = ["1", "true"].includes(
+        String(req.query.inbox ?? "").trim().toLowerCase(),
+      );
       const createdDate = normalizeOptionalDate(req.query.createdDate, "createdDate");
       const createdFrom = normalizeOptionalLocalDateTime(
         req.query.createdFrom,
@@ -1184,7 +1475,7 @@ export const registerTodoFeature = (
           (todo) => todo.categoryId !== null && allowedCategoryIds?.has(todo.categoryId),
         );
       }
-      if (viewRaw === "inbox") {
+      if (viewRaw === "inbox" || inboxOnly) {
         todos = todos.filter((todo) => todo.categoryId === null);
       }
       if (typeRaw) {
@@ -1208,8 +1499,16 @@ export const registerTodoFeature = (
       if (viewRaw === "today") {
         todos = todos.filter((todo) => {
           if (todo.scheduleType === "daily") return todo.isActiveOnDate;
+          if (todo.dueDate) {
+            if (todo.isCompleted) {
+              return todo.dueDate === selectedDate || todo.completionDate === selectedDate;
+            }
+            return todo.dueDate === selectedDate;
+          }
           if (todo.isCompleted) return todo.completionDate === selectedDate;
-          return todo.dueDate === null || todo.dueDate <= selectedDate;
+          // 无截止日期的单次事件：只在其创建日期及之后显示
+          const createdDateKey = String(todo.createdAt || "").slice(0, 10);
+          return !createdDateKey || selectedDate >= createdDateKey;
         });
       }
 
@@ -1949,6 +2248,9 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
   startupTimer.unref();
   logInfo("[todo] reminder scheduler started (30s interval)");
 };
+
+
+
 
 
 

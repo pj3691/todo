@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import express from "express";
@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import jwt from "jsonwebtoken";
 import type { StringValue } from "ms";
 import bcrypt from "bcryptjs";
-import { registerTodoFeature } from "./todo.js";
+import { registerTodoFeature, removeTodoImagesForUser, transferTodoData } from "./todo.js";
 
 type GitCommit = {
   hash: string;
@@ -122,20 +122,50 @@ type DeleteBlogResponse = { res: true; message: string };
 
 // ========== Auth 类型 ==========
 
-type UserRole = "user" | "admin";
+/** 角色等级：只读 < 读写 < 管理员 */
+type UserRole = "readonly" | "readwrite" | "admin";
+
+type UserStatus = "active" | "disabled";
+
+const ROLE_LEVEL: Record<UserRole, number> = {
+  readonly: 1,
+  readwrite: 2,
+  admin: 3,
+};
+
+const USER_ROLES: UserRole[] = ["readonly", "readwrite", "admin"];
+const USER_STATUSES: UserStatus[] = ["active", "disabled"];
+
+const isUserRole = (value: unknown): value is UserRole =>
+  typeof value === "string" && (USER_ROLES as string[]).includes(value);
+
+const isUserStatus = (value: unknown): value is UserStatus =>
+  typeof value === "string" && (USER_STATUSES as string[]).includes(value);
 
 type UserRow = {
   id: number;
   username: string;
   password_hash: string;
   role: UserRole;
+  status: UserStatus;
   created_at: string;
+  last_login_at: string | null;
 };
 
 type JwtPayload = {
   userId: number;
   username: string;
   role: UserRole;
+};
+
+/** 用户管理接口返回的用户信息（不含密码哈希） */
+type UserDto = {
+  id: number;
+  username: string;
+  role: UserRole;
+  status: UserStatus;
+  createdAt: string;
+  lastLoginAt: string | null;
 };
 
 type RuntimeConfig = {
@@ -266,24 +296,7 @@ const upload = multer({
   },
 });
 
-// multer for model uploads: allow .gltf, .glb, .obj and common binary types
-const uploadModel = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const name = String(file.originalname || "").toLowerCase();
-    if (
-      name.endsWith(".gltf") ||
-      name.endsWith(".glb") ||
-      name.endsWith(".obj") ||
-      name.endsWith(".fbx")
-    ) {
-      cb(null, true);
-    } else {
-      cb(new Error("only .gltf/.glb/.obj/.fbx files are allowed"));
-    }
-  },
-});
+// multer for model uploads 已随模型简化接口一并移除
 
 app.use((req, res, next) => {
   const origin = String(req.headers.origin || "");
@@ -314,15 +327,54 @@ app.use(`${apiPrefix}/docs`, express.static(docsDir));
 // 静态托管已生成的模型文件
 app.use(`${apiPrefix}/models`, express.static(modelsDir));
 
+// 用户删除时需要依赖外键级联清理待办数据
+db.pragma("foreign_keys = ON");
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user',
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    role TEXT NOT NULL DEFAULT 'readonly',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    last_login_at TEXT
   )
 `);
+
+// 兼容旧库：补充 status / last_login_at 字段（ALTER 只支持常量默认值）
+const userTableCols = db.prepare("PRAGMA table_info(users)").all() as Array<{
+  name: string;
+}>;
+if (!userTableCols.some((col) => col.name === "status")) {
+  db.exec(
+    "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+  );
+}
+if (!userTableCols.some((col) => col.name === "last_login_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+}
+
+// 旧版本只有 user/admin 两档，统一迁移为三档角色
+db.prepare(
+  "UPDATE users SET role = 'readwrite' WHERE role NOT IN ('readonly','readwrite','admin')",
+).run();
+
+// 系统有且只能有一个管理员：数据库层用部分唯一索引兜底
+const existingAdminCount = (
+  db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as {
+    count: number;
+  }
+).count;
+if (existingAdminCount <= 1) {
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_single_admin ON users(role) WHERE role = 'admin'",
+  );
+} else {
+  logWarn(
+    `[users] detected ${existingAdminCount} administrators; single-admin unique index not created`,
+  );
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS repositories (
@@ -402,11 +454,45 @@ const getUserByIdStmt = db.prepare(
   "SELECT * FROM users WHERE id = ?",
 );
 const insertUserStmt = db.prepare(
-  "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+  "INSERT INTO users (username, password_hash, role, status) VALUES (?, ?, ?, ?)",
+);
+const updateUserStmt = db.prepare(
+  "UPDATE users SET username = ?, role = ?, status = ? WHERE id = ?",
+);
+const updateUserPasswordStmt = db.prepare(
+  "UPDATE users SET password_hash = ? WHERE id = ?",
+);
+const deleteUserStmt = db.prepare("DELETE FROM users WHERE id = ?");
+const touchLastLoginStmt = db.prepare(
+  "UPDATE users SET last_login_at = datetime('now','localtime') WHERE id = ?",
 );
 const getUserCountStmt = db.prepare(
   "SELECT COUNT(*) as count FROM users",
 );
+const getActiveAdminCountStmt = db.prepare(
+  "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND status = 'active'",
+);
+
+/** users 表行 -> 对外 DTO，永不返回密码哈希 */
+const toUserDto = (row: UserRow): UserDto => ({
+  id: row.id,
+  username: row.username,
+  role: row.role,
+  status: row.status,
+  createdAt: row.created_at,
+  lastLoginAt: row.last_login_at ?? null,
+});
+
+/** 角色是否达到指定等级 */
+const hasRoleLevel = (role: UserRole | undefined, min: UserRole): boolean =>
+  Boolean(role) && ROLE_LEVEL[role as UserRole] >= ROLE_LEVEL[min];
+
+/** 当前是否只剩一个可用的管理员 */
+const isLastActiveAdmin = (row: UserRow): boolean => {
+  if (row.role !== "admin" || row.status !== "active") return false;
+  const { count } = getActiveAdminCountStmt.get() as { count: number };
+  return count <= 1;
+};
 
 // ========== Auth 中间件 ==========
 
@@ -419,7 +505,7 @@ declare global {
   }
 }
 
-/** JWT 认证中间件：验证 token 并将用户信息挂在 req.user */
+/** JWT 认证中间件：验证 token，并以数据库中的最新角色/状态覆盖 token 内容 */
 const authMiddleware = (
   req: express.Request,
   res: express.Response,
@@ -431,16 +517,39 @@ const authMiddleware = (
     return;
   }
   const token = authHeader.slice(7);
+  let decoded: JwtPayload;
   try {
-    const decoded = jwt.verify(token, runtimeConfig.jwtSecret) as JwtPayload;
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, runtimeConfig.jwtSecret) as JwtPayload;
   } catch {
     res.status(401).json({ res: false, message: "invalid or expired token" });
+    return;
   }
+
+  // token 中的角色可能已过期，始终以数据库为准，保证改角色/禁用账号立即生效
+  const userId = Number(decoded?.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    res.status(401).json({ res: false, message: "invalid or expired token" });
+    return;
+  }
+  const dbUser = getUserByIdStmt.get(userId) as UserRow | undefined;
+  if (!dbUser) {
+    res.status(401).json({ res: false, message: "user no longer exists" });
+    return;
+  }
+  if (dbUser.status !== "active") {
+    res.status(403).json({ res: false, message: "account is disabled" });
+    return;
+  }
+
+  req.user = {
+    userId: dbUser.id,
+    username: dbUser.username,
+    role: dbUser.role,
+  };
+  next();
 };
 
-/** 角色守卫中间件：要求指定角色 */
+/** 角色守卫中间件：要求精确匹配指定角色 */
 const requireRole = (...roles: UserRole[]) => {
   return (
     req: express.Request,
@@ -452,6 +561,25 @@ const requireRole = (...roles: UserRole[]) => {
       return;
     }
     if (!roles.includes(req.user.role)) {
+      res.status(403).json({ res: false, message: "insufficient permissions" });
+      return;
+    }
+    next();
+  };
+};
+
+/** 角色等级守卫：要求达到指定等级（readonly < readwrite < admin） */
+const requireMinRole = (min: UserRole) => {
+  return (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ): void => {
+    if (!req.user) {
+      res.status(401).json({ res: false, message: "not authenticated" });
+      return;
+    }
+    if (!hasRoleLevel(req.user.role, min)) {
       res.status(403).json({ res: false, message: "insufficient permissions" });
       return;
     }
@@ -486,12 +614,12 @@ app.post(`${apiPrefix}/auth/register`, async (req, res) => {
       return;
     }
 
-    // 第一个用户自动成为管理员
+    // 第一个用户自动成为管理员，其余新用户默认只读，由管理员按需提升
     const { count } = getUserCountStmt.get() as { count: number };
-    const role: UserRole = count === 0 ? "admin" : "user";
+    const role: UserRole = count === 0 ? "admin" : "readonly";
 
     const hash = await bcrypt.hash(password, 10);
-    const info = insertUserStmt.run(username, hash, role);
+    const info = insertUserStmt.run(username, hash, role, "active");
     const user = getUserByIdStmt.get(Number(info.lastInsertRowid)) as UserRow;
 
     const payload: JwtPayload = { userId: user.id, username: user.username, role: user.role };
@@ -499,9 +627,10 @@ app.post(`${apiPrefix}/auth/register`, async (req, res) => {
       expiresIn: runtimeConfig.jwtExpiresIn,
     });
 
+    logInfo(`[auth] registered user ${user.username} (${user.role})`);
     res.status(201).json({
       res: true,
-      user: { id: user.id, username: user.username, role: user.role },
+      user: toUserDto(user),
       token,
     });
   } catch (error: any) {
@@ -530,6 +659,13 @@ app.post(`${apiPrefix}/auth/login`, async (req, res) => {
       res.status(401).json({ res: false, message: "invalid username or password" });
       return;
     }
+    if (user.status !== "active") {
+      res.status(403).json({ res: false, message: "account is disabled" });
+      return;
+    }
+
+    touchLastLoginStmt.run(user.id);
+    const fresh = getUserByIdStmt.get(user.id) as UserRow;
 
     const payload: JwtPayload = { userId: user.id, username: user.username, role: user.role };
     const token = jwt.sign(payload, runtimeConfig.jwtSecret, {
@@ -538,7 +674,7 @@ app.post(`${apiPrefix}/auth/login`, async (req, res) => {
 
     res.json({
       res: true,
-      user: { id: user.id, username: user.username, role: user.role },
+      user: toUserDto(fresh),
       token,
     });
   } catch (error: any) {
@@ -548,10 +684,353 @@ app.post(`${apiPrefix}/auth/login`, async (req, res) => {
 
 /** 获取当前用户信息: GET /gitstatus/api/auth/me */
 app.get(`${apiPrefix}/auth/me`, authMiddleware, (req, res) => {
+  const row = getUserByIdStmt.get(req.user!.userId) as UserRow | undefined;
+  if (!row) {
+    res.status(404).json({ res: false, message: "user not found" });
+    return;
+  }
+  res.json({ res: true, user: toUserDto(row) });
+});
+
+// ========== 用户管理 API（仅管理员） ==========
+
+/** 校验用户名：3-32 个字符 */
+const validateUsername = (username: string): string | null => {
+  if (!username) return "username is required";
+  if (username.length < 3 || username.length > 32) {
+    return "username must be 3-32 characters";
+  }
+  return null;
+};
+
+/** 校验密码：至少 6 个字符 */
+const validatePassword = (password: string): string | null => {
+  if (!password) return "password is required";
+  if (password.length < 6) return "password must be at least 6 characters";
+  return null;
+};
+
+/** 用户列表: GET /gitstatus/api/users?search=&role=&status=&page=&pageSize=&sort=&order= */
+app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) => {
+  const search = String(req.query.search ?? "").trim();
+  const roleFilter = String(req.query.role ?? "").trim();
+  const statusFilter = String(req.query.status ?? "").trim();
+
+  if (roleFilter && !isUserRole(roleFilter)) {
+    res.status(400).json({ res: false, message: "invalid role filter" });
+    return;
+  }
+  if (statusFilter && !isUserStatus(statusFilter)) {
+    res.status(400).json({ res: false, message: "invalid status filter" });
+    return;
+  }
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+  const offset = (page - 1) * pageSize;
+
+  const sortRaw = String(req.query.sort ?? "id");
+  const sortableFields = ["id", "username", "role", "status", "created_at", "last_login_at"];
+  const sortField = sortableFields.includes(sortRaw) ? sortRaw : "id";
+  const sortOrder =
+    String(req.query.order ?? "").toLowerCase() === "desc" ? "DESC" : "ASC";
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (search) {
+    conditions.push("username LIKE ? COLLATE NOCASE");
+    params.push(`%${search.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`);
+  }
+  if (roleFilter) {
+    conditions.push("role = ?");
+    params.push(roleFilter);
+  }
+  if (statusFilter) {
+    conditions.push("status = ?");
+    params.push(statusFilter);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const total = (
+    db.prepare(`SELECT COUNT(*) as total FROM users ${whereClause}`).get(...params) as {
+      total: number;
+    }
+  ).total;
+  const rows = db
+    .prepare(
+      `SELECT * FROM users ${whereClause} ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`,
+    )
+    .all(...params, pageSize, offset) as UserRow[];
+
   res.json({
     res: true,
-    user: req.user,
+    total,
+    page,
+    pageSize,
+    users: rows.map(toUserDto),
   });
+});
+
+/** 用户详情: GET /gitstatus/api/users/:id */
+app.get(`${apiPrefix}/users/:id`, authMiddleware, requireRole("admin"), (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ res: false, message: "invalid id" });
+    return;
+  }
+  const row = getUserByIdStmt.get(id) as UserRow | undefined;
+  if (!row) {
+    res.status(404).json({ res: false, message: "user not found" });
+    return;
+  }
+  res.json({ res: true, user: toUserDto(row) });
+});
+
+/** 创建用户: POST /gitstatus/api/users */
+app.post(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const username = String(body.username ?? "").trim();
+    const password = String(body.password ?? "");
+    const roleRaw = body.role === undefined ? "readonly" : String(body.role);
+    const statusRaw = body.status === undefined ? "active" : String(body.status);
+
+    const usernameError = validateUsername(username);
+    if (usernameError) {
+      res.status(400).json({ res: false, message: usernameError });
+      return;
+    }
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      res.status(400).json({ res: false, message: passwordError });
+      return;
+    }
+    if (!isUserRole(roleRaw)) {
+      res.status(400).json({ res: false, message: "role must be readonly, readwrite or admin" });
+      return;
+    }
+    if (!isUserStatus(statusRaw)) {
+      res.status(400).json({ res: false, message: "status must be active or disabled" });
+      return;
+    }
+    if (roleRaw === "admin") {
+      res
+        .status(400)
+        .json({ res: false, message: "administrator role cannot be created" });
+      return;
+    }
+
+    const existing = getUserByNameStmt.get(username) as UserRow | undefined;
+    if (existing) {
+      res.status(409).json({ res: false, message: "username already exists" });
+      return;
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const info = insertUserStmt.run(username, hash, roleRaw, statusRaw);
+    const created = getUserByIdStmt.get(Number(info.lastInsertRowid)) as UserRow;
+    logInfo(
+      `[users] ${req.user!.username} created user ${created.username} (${created.role}, ${created.status})`,
+    );
+    res.status(201).json({ res: true, user: toUserDto(created) });
+  } catch (error: any) {
+    res.status(500).json({ res: false, message: error?.message || "create user failed" });
+  }
+});
+
+/** 修改用户: PATCH /gitstatus/api/users/:id */
+app.patch(`${apiPrefix}/users/:id`, authMiddleware, requireRole("admin"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ res: false, message: "invalid id" });
+      return;
+    }
+    const row = getUserByIdStmt.get(id) as UserRow | undefined;
+    if (!row) {
+      res.status(404).json({ res: false, message: "user not found" });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const has = (key: string): boolean =>
+      Object.prototype.hasOwnProperty.call(body, key);
+    if (!["username", "password", "role", "status"].some(has)) {
+      res.status(400).json({ res: false, message: "no fields to update" });
+      return;
+    }
+
+    let username = row.username;
+    if (has("username")) {
+      username = String(body.username ?? "").trim();
+      const usernameError = validateUsername(username);
+      if (usernameError) {
+        res.status(400).json({ res: false, message: usernameError });
+        return;
+      }
+      const sameName = getUserByNameStmt.get(username) as UserRow | undefined;
+      if (sameName && sameName.id !== id) {
+        res.status(409).json({ res: false, message: "username already exists" });
+        return;
+      }
+    }
+
+    let role = row.role;
+    if (has("role")) {
+      const roleRaw = String(body.role);
+      if (!isUserRole(roleRaw)) {
+        res.status(400).json({ res: false, message: "role must be readonly, readwrite or admin" });
+        return;
+      }
+      role = roleRaw;
+    }
+
+    // 管理员角色不允许创建或转移：只允许保持原有管理员身份
+    if (role === "admin" && row.role !== "admin") {
+      res
+        .status(400)
+        .json({ res: false, message: "administrator role cannot be transferred" });
+      return;
+    }
+
+    let status = row.status;
+    if (has("status")) {
+      const statusRaw = String(body.status);
+      if (!isUserStatus(statusRaw)) {
+        res.status(400).json({ res: false, message: "status must be active or disabled" });
+        return;
+      }
+      status = statusRaw;
+    }
+
+    let passwordHash: string | null = null;
+    if (has("password")) {
+      const password = String(body.password ?? "");
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        res.status(400).json({ res: false, message: passwordError });
+        return;
+      }
+      passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    // 自保护：不能修改自己的角色或状态，避免误操作导致无人可管理
+    if (id === req.user!.userId) {
+      if (role !== row.role) {
+        res.status(400).json({ res: false, message: "cannot change your own role" });
+        return;
+      }
+      if (status !== row.status) {
+        res.status(400).json({ res: false, message: "cannot change your own status" });
+        return;
+      }
+    }
+
+    if (role === "admin" && status !== "active") {
+      res.status(400).json({ res: false, message: "administrator must be active" });
+      return;
+    }
+
+    // 系统必须保留至少一个可用的管理员
+    if (isLastActiveAdmin(row) && (role !== "admin" || status !== "active")) {
+      res
+        .status(400)
+        .json({ res: false, message: "cannot demote or disable the last active admin" });
+      return;
+    }
+
+    const applyUpdate = db.transaction(() => {
+      updateUserStmt.run(username, role, status, id);
+      if (passwordHash) {
+        updateUserPasswordStmt.run(passwordHash, id);
+      }
+    });
+    applyUpdate();
+
+    const updated = getUserByIdStmt.get(id) as UserRow;
+    logInfo(
+      `[users] ${req.user!.username} updated user ${row.username} -> username=${updated.username}, role=${updated.role}, status=${updated.status}${passwordHash ? ", password reset" : ""}`,
+    );
+    res.json({ res: true, user: toUserDto(updated) });
+  } catch (error: any) {
+    res.status(500).json({ res: false, message: error?.message || "update user failed" });
+  }
+});
+
+/** 迁移用户数据: POST /gitstatus/api/users/:id/transfer */
+app.post(`${apiPrefix}/users/:id/transfer`, authMiddleware, requireRole("admin"), (req, res) => {
+  try {
+    const sourceId = Number(req.params.id);
+    const targetId = Number((req.body ?? {}).targetUserId);
+    if (!Number.isInteger(sourceId) || sourceId <= 0) {
+      res.status(400).json({ res: false, message: "invalid id" });
+      return;
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      res.status(400).json({ res: false, message: "invalid targetUserId" });
+      return;
+    }
+    if (sourceId === targetId) {
+      res.status(400).json({ res: false, message: "source and target user must differ" });
+      return;
+    }
+    const source = getUserByIdStmt.get(sourceId) as UserRow | undefined;
+    const target = getUserByIdStmt.get(targetId) as UserRow | undefined;
+    if (!source) {
+      res.status(404).json({ res: false, message: "source user not found" });
+      return;
+    }
+    if (!target) {
+      res.status(404).json({ res: false, message: "target user not found" });
+      return;
+    }
+
+    const stats = transferTodoData(db, sourceId, targetId);
+    logInfo(
+      `[users] ${req.user!.username} transferred todo data from ${source.username} to ${target.username}: ` +
+        `${stats.categories} categories, ${stats.tags} tags, ${stats.todos} todos, ${stats.images} images`,
+    );
+    res.json({ res: true, message: "transferred", stats });
+  } catch (error: any) {
+    res.status(500).json({ res: false, message: error?.message || "transfer user data failed" });
+  }
+});
+
+/** 删除用户: DELETE /gitstatus/api/users/:id */
+app.delete(`${apiPrefix}/users/:id`, authMiddleware, requireRole("admin"), (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ res: false, message: "invalid id" });
+      return;
+    }
+    const row = getUserByIdStmt.get(id) as UserRow | undefined;
+    if (!row) {
+      res.status(404).json({ res: false, message: "user not found" });
+      return;
+    }
+    if (id === req.user!.userId) {
+      res.status(400).json({ res: false, message: "cannot delete your own account" });
+      return;
+    }
+    if (isLastActiveAdmin(row)) {
+      res.status(400).json({ res: false, message: "cannot delete the last active admin" });
+      return;
+    }
+
+    // 待办、分类、标签、图片记录由外键级联删除，磁盘图片单独清理
+    const removeUser = db.transaction(() => {
+      // 先解除分类父子引用，避免 users 级联删除时触发 parent_id 的 RESTRICT 约束
+      db.prepare("UPDATE todo_categories SET parent_id = NULL WHERE user_id = ?").run(id);
+      deleteUserStmt.run(id);
+    });
+    removeUser();
+    removeTodoImagesForUser(id);
+    logInfo(`[users] ${req.user!.username} deleted user ${row.username} (id=${id})`);
+    res.json({ res: true, message: "deleted" });
+  } catch (error: any) {
+    res.status(500).json({ res: false, message: error?.message || "delete user failed" });
+  }
 });
 
 const listBranches = (repoPath: string): Promise<string[]> => {
@@ -714,7 +1193,8 @@ const parseRepoRow = (row: RepoRow | undefined) => {
 };
 
 // 查询接口: GET /gitstatus/api/repos 或 GET /gitstatus/api/repos?id=1
-app.get(`${apiPrefix}/repos`, (req, res) => {
+// 需要登录，任意角色可读
+app.get(`${apiPrefix}/repos`, authMiddleware, (req, res) => {
   const idRaw = String(req.query.id ?? "").trim();
   if (idRaw) {
     const id = Number(idRaw);
@@ -751,7 +1231,8 @@ app.get(`${apiPrefix}/repos`, (req, res) => {
 });
 
 // 新增接口: POST /gitstatus/api/repos
-app.post(`${apiPrefix}/repos`, async (req, res) => {
+// 需要读写及以上角色
+app.post(`${apiPrefix}/repos`, authMiddleware, requireMinRole("readwrite"), async (req, res) => {
   try {
     const name = String(req.body?.name ?? "").trim();
     const url = String(req.body?.url ?? "").trim();
@@ -793,7 +1274,8 @@ app.post(`${apiPrefix}/repos`, async (req, res) => {
 });
 
 // 修改接口: PATCH /gitstatus/api/repos/:id
-app.patch(`${apiPrefix}/repos/:id`, (req, res) => {
+// 需要读写及以上角色
+app.patch(`${apiPrefix}/repos/:id`, authMiddleware, requireMinRole("readwrite"), (req, res) => {
   (async () => {
     const id = Number(req.params.id);
     const name = String(req.body?.name ?? "").trim();
@@ -846,7 +1328,8 @@ app.patch(`${apiPrefix}/repos/:id`, (req, res) => {
 });
 
 // 刷新接口: POST /gitstatus/api/repos/:id/refresh
-app.post(`${apiPrefix}/repos/:id/refresh`, async (req, res) => {
+// 需要读写及以上角色
+app.post(`${apiPrefix}/repos/:id/refresh`, authMiddleware, requireMinRole("readwrite"), async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -1155,11 +1638,11 @@ const parseFormJson = <T>(val: unknown, fallback: T): T => {
 
 // 新增博客: POST /gitstatus/api/blogs
 // 支持 JSON 和 multipart/form-data（文件上传）两种方式
-// 需要登录，仅管理员可操作
+// 需要登录，读写及以上角色可操作
 app.post(
   `${apiPrefix}/blogs`,
   authMiddleware,
-  requireRole("admin"),
+  requireMinRole("readwrite"),
   upload.single("file"),
   async (req: express.Request, res: express.Response) => {
     try {
@@ -1236,104 +1719,15 @@ app.post(
   },
 );
 
-/** 查找 gltfpack 可执行文件（环境变量 > 本机部署路径 > 仓库本地 > PATH 兜底） */
-const findGltfpackExe = (): string => {
-  const candidates = [
-    process.env.GLTFPACK_BIN,
-    "D:\\1-WorkFile\\program\\1-demo\\DataProcessing\\Model\\gltfpack.exe",
-    path.resolve("./gltfpack.exe"),
-    path.resolve("./src/gltfpack.exe"),
-    path.resolve("./bin/gltfpack.exe"),
-  ].filter(Boolean) as string[];
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch (e) {
-      continue;
-    }
-  }
-  // 兜底：依赖系统 PATH（找不到时由调用方报 ENOENT）
-  return process.platform === "win32" ? "gltfpack.exe" : "gltfpack";
-};
-
-/** 模型简化接口：POST /gitstatus/api/models/simplify
- *  multipart/form-data: file=<model>, args=<optional extra args string>
- */
-app.post(
-  `${apiPrefix}/models/simplify`,
-  uploadModel.single("file"),
-  async (req: express.Request, res: express.Response) => {
-    try {
-      if (!req.file) {
-        res.status(400).json({ res: false, message: "no file uploaded" });
-        return;
-      }
-
-      const originalName = safeFileName(req.file.originalname || "model");
-      const tmpDir = fs.mkdtempSync(path.join(modelsDir, "tmp-"));
-      const inPath = path.join(tmpDir, originalName);
-      fs.writeFileSync(inPath, req.file.buffer);
-
-      const baseName = originalName.replace(/\.[^.]+$/, "");
-      const outName = `${baseName}-simplified.glb`;
-      const outPath = path.join(modelsDir, outName);
-
-      // 解析额外参数（以空格分割）——只允许简单安全字符
-      let extraArgs: string[] = [];
-      const rawArgs = req.body?.args;
-      if (rawArgs) {
-        const s = String(rawArgs).trim();
-        if (s) {
-          extraArgs = s.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-        }
-      }
-
-      const exe = findGltfpackExe();
-      const args = ["-i", inPath, "-o", outPath, ...extraArgs];
-
-      logInfo(`[gltfpack] ${exe} ${args.join(" ")}`);
-      const proc = spawnSync(exe, args, { timeout: 2 * 60 * 1000 });
-      if (proc.error) {
-        logError("gltfpack execution failed", proc.error);
-        throw proc.error;
-      }
-      const stdout = String(proc.stdout || "");
-      const stderr = String(proc.stderr || "");
-      if (proc.status !== 0) {
-        logError(`[gltfpack] exited ${proc.status} ${stderr}`);
-        res.status(500).json({ res: false, message: `gltfpack failed: ${stderr || stdout}` });
-        try {
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-        } catch (e) {}
-        return;
-      }
-
-      // 清理临时输入文件
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch (e) {
-        /* ignore */
-      }
-
-      logInfo(`[gltfpack] succeeded, output: ${outPath}`);
-
-      // 返回可通过 API 访问的相对路径
-      const publicPath = `${apiPrefix}/models/${outName}`;
-      res.json({ res: true, path: publicPath });
-    } catch (error: any) {
-      logError("models/simplify error", error);
-      res.status(500).json({ res: false, message: error?.message || "simplify failed" });
-    }
-  },
-);
+// 模型简化接口（/models/simplify）已移除；src/output/models 仍作为历史文件的静态目录保留
 
 // 更新博客: PATCH /gitstatus/api/blogs/:id
 // 支持 JSON 和 multipart/form-data（文件上传）两种方式
-// 需要登录，仅管理员可操作
+// 需要登录，读写及以上角色可操作
 app.patch(
   `${apiPrefix}/blogs/:id`,
   authMiddleware,
-  requireRole("admin"),
+  requireMinRole("readwrite"),
   upload.single("file"),
   (req: express.Request, res: express.Response) => {
     const id = Number(req.params.id);
@@ -1503,11 +1897,11 @@ const formatDateTime = (date: Date | string | number): string => {
 };
 
 // 删除博客: DELETE /gitstatus/api/blogs/:id
-// 需要登录，仅管理员可操作
+// 需要登录，读写及以上角色可操作
 app.delete<IdParams, DeleteBlogResponse | ErrorResponse>(
   `${apiPrefix}/blogs/:id`,
   authMiddleware,
-  requireRole("admin"),
+  requireMinRole("readwrite"),
   (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -1566,7 +1960,7 @@ type RefreshBlogResponse = {
 app.post<Record<string, string>, RefreshBlogResponse | ErrorResponse>(
   `${apiPrefix}/blogs/refresh`,
   authMiddleware,
-  requireRole("admin"),
+  requireMinRole("readwrite"),
   (req, res) => {
     try {
       const mdFiles = scanMdFiles(docsDir);
@@ -1639,6 +2033,7 @@ registerTodoFeature(app, {
   db,
   apiPrefix,
   authMiddleware,
+  requireWrite: requireMinRole("readwrite"),
   logInfo,
   logWarn,
   logError,

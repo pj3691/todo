@@ -7,7 +7,7 @@
 1. `npm install`
 2. `npm run dev`
 
-服务运行在 `http://localhost:65123`
+服务运行在 `http://localhost:30012`
 
 ---
 
@@ -22,6 +22,8 @@
 #### 1. 查询仓库列表 / 单个仓库
 
 **GET** `/repos`
+
+需要登录（任意角色可读）。
 
 | 参数 | 类型 | 必需 | 说明 |
 |---|---|---|---|
@@ -42,6 +44,8 @@
 
 **POST** `/repos`
 
+需要 `readwrite` 及以上角色。
+
 | 字段 | 类型 | 必需 | 说明 |
 |---|---|---|---|
 | `name` | string | **是** | 仓库名称 |
@@ -51,6 +55,8 @@
 #### 3. 修改仓库
 
 **PATCH** `/repos/:id`
+
+需要 `readwrite` 及以上角色。
 
 | 字段 | 类型 | 必需 | 说明 |
 |---|---|---|---|
@@ -62,15 +68,23 @@
 
 **POST** `/repos/:id/refresh`
 
-重新扫描仓库的所有分支和提交历史。
+需要 `readwrite` 及以上角色，重新扫描仓库的所有分支和提交历史。
 
 ---
 
 ### 二、认证 API
 
-用户分为两种角色：`admin`（管理员）和 `user`（普通用户）。第一个注册的用户自动成为管理员。
+用户分为三种角色：`admin`（管理员）、`readwrite`（读写）、`readonly`（只读）。第一个注册的用户自动成为管理员，之后注册的用户默认只读，由管理员按需提升。旧版本中的 `user` 角色会自动迁移为 `readwrite`。
 
-博客的写操作（新增、更新、删除、刷新）仅管理员可操作，博客查询接口无需认证。
+系统有且只有一个管理员账号。除首个注册用户外，不支持创建其他管理员，也不支持通过编辑用户转移管理员角色。
+
+权限等级为 `readonly < readwrite < admin`。所有权限校验都以数据库中的最新角色为准，因此修改角色、禁用账号会立即生效，无需重新登录。
+
+- `readonly`：可以查看数据（仓库、待办、博客），不能执行任何写操作。
+- `readwrite`：可以使用待办、博客、仓库管理的全部读写功能。
+- `admin`：在读写权限之上，额外拥有用户管理能力。
+
+博客的写操作（新增、更新、删除、刷新）需要 `readwrite` 及以上角色，博客查询接口无需认证。
 
 #### 1. 注册
 
@@ -145,7 +159,103 @@ Authorization: Bearer <token>
 
 ---
 
-### 三、博客文章 API
+### 三、用户管理 API（仅管理员）
+
+所有接口都需要 `admin` 角色，并在请求头携带 `Authorization: Bearer <token>`。
+
+#### 1. 用户列表
+
+**GET** `/users`
+
+| 参数 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `search` | string | 否 | 按用户名模糊搜索 |
+| `role` | string | 否 | 角色筛选：`admin` / `readwrite` / `readonly` |
+| `status` | string | 否 | 状态筛选：`active` / `disabled` |
+| `page` | string | 否 | 页码，默认 1 |
+| `pageSize` | string | 否 | 每页条数，默认 20，最大 100 |
+| `sort` | string | 否 | 排序字段：`id` / `username` / `role` / `status` / `created_at` / `last_login_at` |
+| `order` | string | 否 | `asc` / `desc`，默认 `asc` |
+
+**响应：**
+
+```json
+{
+  "res": true,
+  "total": 4,
+  "page": 1,
+  "pageSize": 20,
+  "users": [
+    { "id": 1, "username": "admin", "role": "admin", "status": "active", "createdAt": "2026-01-01 10:00:00", "lastLoginAt": "2026-01-02 09:00:00" }
+  ]
+}
+```
+
+#### 2. 用户详情
+
+**GET** `/users/:id`
+
+#### 3. 创建用户
+
+**POST** `/users`
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `username` | string | **是** | 3-32 个字符，唯一 |
+| `password` | string | **是** | 至少 6 个字符 |
+| `role` | string | 否 | 默认 `readonly`；不支持创建 `admin`（返回 400） |
+| `status` | string | 否 | 默认 `active` |
+
+#### 4. 修改用户
+
+**PATCH** `/users/:id`
+
+可传字段：`username`、`password`（重置密码）、`role`、`status`。
+
+保护规则：
+
+- 不能修改自己的角色或状态；
+- 系统有且只有一个管理员：不支持把其他用户设为 `admin`（返回 400）；
+- 管理员账号必须保持 `active`；
+- 系统必须至少保留一个可用的管理员（不能降级、禁用或删除最后一个 active 管理员）。
+
+#### 5. 删除用户
+
+**DELETE** `/users/:id`
+
+- 不能删除当前登录账号；
+- 删除时会级联清理该用户的待办、分类、标签、图片记录及图片文件。
+
+#### 6. 迁移用户数据
+
+**POST** `/users/:id/transfer`
+
+把 `:id` 用户的全部待办数据迁移给另一个用户（仅管理员）。
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `targetUserId` | number | **是** | 目标用户 ID，不能与源用户相同 |
+
+迁移规则：
+
+- 迁移分类、标签、待办和图片；待办相关的完成记录、提醒、通知日志随待办一起保留；
+- 目标用户已有同名同级分类、同名标签时自动复用并合并，不产生重复数据；
+- 源用户的分类、标签、待办和图片会被清空（账号本身保留）；
+- 图片文件会从源用户目录移动到目标用户目录。
+
+**响应：**
+
+```json
+{
+  "res": true,
+  "message": "transferred",
+  "stats": { "categories": 3, "tags": 2, "todos": 12, "images": 4 }
+}
+```
+
+---
+
+### 四、博客文章 API
 
 #### 1. 查询博客列表 / 单篇（无需认证）
 
@@ -218,7 +328,7 @@ GET /gitstatus/api/blogs?id=1
 
 ---
 
-#### 2. 新增博客（需管理员权限）
+#### 2. 新增博客（需读写及以上权限）
 
 **POST** `/blogs`
 
@@ -300,7 +410,7 @@ src/docs/
 
 ---
 
-#### 3. 更新博客（需管理员权限）
+#### 3. 更新博客（需读写及以上权限）
 
 **PATCH** `/blogs/:id`
 
@@ -336,7 +446,7 @@ src/docs/
 
 ---
 
-#### 4. 删除博客（需管理员权限）
+#### 4. 删除博客（需读写及以上权限）
 
 **DELETE** `/blogs/:id`
 
@@ -378,65 +488,26 @@ src/docs/
 
 ---
 
-### 四、模型简化 API
-
-模型简化接口用于接收客户端上传的 3D 模型文件（例如 `.gltf` / `.glb` / `.obj`），调用 `gltfpack` 进行简化/打包，并将简化后的文件保存到服务器 `src/output/models`，返回可通过 API 访问的路径。
-
-**POST** `/models/simplify`
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---:|---:|---|
-| `file` | File | **是** | 要上传的模型文件，支持 `.gltf`, `.glb`, `.obj`, `.fbx` 等常见格式（multipart/form-data） |
-| `args` | string | 否 | 传递给 `gltfpack` 的额外参数字符串（空格分隔）。服务器会强制使用内部指定的输入/输出路径，`-i` 和 `-o` 参数将被忽略或覆盖。|
-
-**安全说明：**
-- 默认情况下服务器会忽略/覆盖 `-i` 和 `-o`，并将输出写入受控目录 `src/output/models`，以防止路径遍历或覆盖系统文件。若允许传入完整参数，需要额外打开受信任模式或管理员权限。
-
-**请求示例（curl）**：
-```bash
-curl -v \
-  -F "file=@/full/path/to/model.glb" \
-  -F "args=-b -q 80" \
-  http://localhost:30012/gitstatus/api/models/simplify
-```
-
-**请求示例（fetch）**：
-```javascript
-const form = new FormData();
-form.append('file', myFile); // 浏览器端的 File/Blob
-form.append('args', '-b -q 80');
-
-const resp = await fetch('http://localhost:30012/gitstatus/api/models/simplify', {
-  method: 'POST',
-  body: form,
-});
-const data = await resp.json();
-console.log(data);
-```
-
-**成功响应示例**：
-```json
-{ "res": true, "path": "/gitstatus/api/models/model-simplified.glb" }
-```
-
-**错误响应**：
-- 400: 上传失败或缺少 `file` 字段
-- 500: 服务器内部错误或 `gltfpack` 执行失败（stderr 将记录在服务日志）
-
----
-
-
-
-### 四、静态资源
+### 五、静态资源与前端页面
 
 | 路径 | 说明 |
 |---|---|
-| `/pages/*` | 页面静态文件 (`src/pages/`) |
+| `/pages/index.html` | Git 洞察页面 |
+| `/pages/todo.html` | 待办清单页面 |
+| `/pages/account.html` | 账号管理页面（仅管理员） |
+| `/pages/auth-test.html` | Auth API 测试页面 |
+| `/pages/assets/styles/*` | 共享主题与组件样式（`theme.css` / `components.css`） |
+| `/pages/assets/js/*` | 共享前端脚本（`auth-client.js` / `account.js`） |
+| `/pages/assets/vendor/*` | 本地第三方库（Chart.js、chartjs-plugin-zoom） |
 | `/gitstatus/api/docs/*` | 博客文档静态文件 (`src/docs/`) |
+
+所有页面均不依赖外部 CDN，第三方 JS 已放入 `src/pages/assets/vendor/`。页面统一使用 `theme.css` 中的设计令牌，以及 `components.css` 中的按钮、表单、卡片、表格、弹窗、Toast、账号信息卡等组件。
+
+顶部导航（品牌、导航链接、账号图标）在三个业务页面中保持一致；将鼠标悬停在账号图标上会显示账号信息卡片，其中包含角色、状态、最近登录时间，以及退出登录和账号管理入口（仅管理员可见）。账号管理页支持将某个用户的待办数据迁移给另一个用户（含分类、标签、待办、完成记录、提醒与图片）。
 
 ---
 
-### 五、数据结构
+### 六、数据结构
 
 #### BlogPost（API 返回格式）
 
@@ -456,7 +527,7 @@ console.log(data);
 
 ---
 
-### 六、文件上传限制
+### 七、文件上传限制
 
 | 项目 | 限制 |
 |---|---|
@@ -466,7 +537,7 @@ console.log(data);
 
 ---
 
-### 七、日志
+### 八、日志
 
 服务运行日志按日期自动切分，保存在 `src/output/logs/YYYY-MM-DD.log`，同时输出到控制台。
 
@@ -488,7 +559,7 @@ console.log(data);
 
 ---
 
-### 八、配置文件
+### 九、配置文件
 
 `config/config.json`：
 
@@ -500,7 +571,7 @@ console.log(data);
 
 ---
 
-### 九、通用错误响应格式
+### 十、通用错误响应格式
 
 ```json
 { "res": false, "message": "错误描述" }
