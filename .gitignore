@@ -1,7 +1,9 @@
 src/output/*
 node_modules/*
 node_modules
-pages/
+
+# 页面入口与共享资源纳入版本管理，dist 为历史构建产物不入库
+src/pages/dist/
 
 # 运行时日志
 debug.log
