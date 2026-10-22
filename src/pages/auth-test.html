@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth API 接口测试</title>
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            padding: 24px;
+        }
+
+        h1 {
+            font-size: 1.6rem;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #238c59, #145d3a);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            margin-bottom: 24px;
+            font-size: 0.88rem;
+        }
+
+        .card {
+            padding: 20px 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 1.08rem;
+            margin-bottom: 14px;
+            color: var(--text);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .form-group label {
+            font-size: 0.74rem;
+            color: var(--text-soft);
+            font-weight: 700;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            min-width: 200px;
+            height: 40px;
+            border: 1px solid var(--line-strong);
+            border-radius: 11px;
+            padding: 0 12px;
+            color: var(--text);
+            background: #fff;
+            font-size: 0.85rem;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #73b38f;
+            box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.11);
+        }
+
+        .btn {
+            height: 40px;
+            padding: 0 18px;
+        }
+
+        .btn-secondary {
+            background: var(--surface-soft);
+            color: var(--text-soft);
+        }
+
+        .token-display {
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: var(--surface-muted);
+            border-radius: 10px;
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            word-break: break-all;
+            color: var(--text-soft);
+            max-height: 60px;
+            overflow: auto;
+        }
+
+        .token-display.has-token {
+            background: var(--green-soft);
+            color: var(--green-strong);
+        }
+
+        .result-box {
+            margin-top: 12px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-family: var(--mono);
+            font-size: 0.79rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 280px;
+            overflow: auto;
+            background: var(--surface-soft);
+            border: 1px solid var(--line);
+            color: var(--text-soft);
+        }
+
+        .result-box.success {
+            background: var(--green-soft);
+            border-color: #b4e2bc;
+        }
+
+        .result-box.error {
+            background: var(--red-soft);
+            border-color: #f5c6c6;
+            color: var(--red);
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding: 10px 16px;
+            background: var(--surface-soft);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            font-size: 0.82rem;
+            color: var(--text-soft);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .status-dot.online {
+            background: var(--green);
+        }
+
+        .blog-list {
+            margin-top: 12px;
+        }
+
+        .blog-item {
+            padding: 8px 12px;
+            background: var(--surface-soft);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            font-size: 0.81rem;
+        }
+
+        .blog-item strong {
+            color: var(--green-strong);
+        }
+
+        .divider {
+            border: none;
+            border-top: 1px dashed var(--line);
+            margin: 16px 0;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔐 Auth & Blog API 接口测试</h1>
+    <p class="subtitle">用于测试 注册 / 登录 / 认证 / 博客CRUD 接口</p>
+
+    <!-- 状态栏 -->
+    <div class="status-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">未登录</span>
+        <span style="margin-left:auto; color:#57606a;" id="roleText"></span>
+    </div>
+
+    <!-- 1. 注册 -->
+    <div class="card">
+        <h2>📝 1. 注册 — POST /auth/register</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="regUsername" value="admin" placeholder="3-32 个字符" />
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="regPassword" value="123456" placeholder="至少 6 个字符" />
+            </div>
+            <button class="btn btn-primary" onclick="doRegister()">注册</button>
+        </div>
+        <div class="result-box" id="registerResult">点击 "注册" 查看结果（首个用户自动成为 admin）</div>
+    </div>
+
+    <!-- 2. 登录 -->
+    <div class="card">
+        <h2>🔑 2. 登录 — POST /auth/login</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="loginUsername" value="admin" />
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="loginPassword" value="123456" />
+            </div>
+            <button class="btn btn-primary" onclick="doLogin()">登录</button>
+            <button class="btn btn-danger" onclick="doLogout()">清除 Token</button>
+        </div>
+        <div class="token-display" id="tokenDisplay">Token: (无)</div>
+        <div class="result-box" id="loginResult">点击 "登录" 查看结果</div>
+    </div>
+
+    <!-- 3. 获取当前用户 -->
+    <div class="card">
+        <h2>👤 3. 当前用户 — GET /auth/me</h2>
+        <div class="form-row">
+            <button class="btn btn-secondary" onclick="doGetMe()">获取当前用户信息</button>
+        </div>
+        <div class="result-box" id="meResult">需要先登录获取 Token</div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- 4. 博客查询（公开） -->
+    <div class="card">
+        <h2>📖 4. 博客查询（无需认证） — GET /blogs</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>ID（可选）</label>
+                <input type="text" id="queryBlogId" placeholder="留空查全部" style="min-width:100px" />
+            </div>
+            <div class="form-group">
+                <label>🔍 search（全文搜索）</label>
+                <input type="text" id="querySearch" placeholder="搜索标题/摘要/内容" style="min-width:160px" />
+            </div>
+            <div class="form-group">
+                <label>tags（可选）</label>
+                <input type="text" id="queryTags" placeholder="如: js,vue" style="min-width:120px" />
+            </div>
+            <div class="form-group">
+                <label>categories（可选）</label>
+                <input type="text" id="queryCategories" placeholder="如: 前端" style="min-width:120px" />
+            </div>
+            <div class="form-group">
+                <label>page</label>
+                <input type="text" id="queryPage" value="1" style="min-width:60px" />
+            </div>
+            <div class="form-group">
+                <label>pageSize</label>
+                <input type="text" id="queryPageSize" value="10" style="min-width:60px" />
+            </div>
+            <button class="btn btn-secondary" onclick="doQueryBlogs()">查询</button>
+        </div>
+        <div class="result-box" id="queryResult">点击 "查询" 查看结果</div>
+    </div>
+
+    <!-- 5. 新增博客（需 admin） -->
+    <div class="card">
+        <h2>✏️ 5. 新增博客（需管理员） — POST /blogs</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>标题 *</label>
+                <input type="text" id="newTitle" value="测试文章" />
+            </div>
+            <div class="form-group">
+                <label>tags (JSON)</label>
+                <input type="text" id="newTags" value='["测试","API"]' style="min-width:150px" />
+            </div>
+            <div class="form-group">
+                <label>categories (JSON)</label>
+                <input type="text" id="newCategories" value='["技术","后端"]' style="min-width:150px" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>摘要</label>
+                <input type="text" id="newExcerpt" value="这是一篇测试文章" style="min-width:300px" />
+            </div>
+            <div class="form-group">
+                <label>封面 URL</label>
+                <input type="text" id="newCover" placeholder="可选" style="min-width:200px" />
+            </div>
+            <button class="btn btn-primary" onclick="doCreateBlog()">新增</button>
+        </div>
+        <div class="result-box" id="createResult">需要管理员 Token</div>
+    </div>
+
+    <!-- 6. 更新博客（需 admin） -->
+    <div class="card">
+        <h2>🔄 6. 更新博客（需管理员） — PATCH /blogs/:id</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>博客 ID *</label>
+                <input type="text" id="updateId" placeholder="输入 ID" style="min-width:80px" />
+            </div>
+            <div class="form-group">
+                <label>新标题</label>
+                <input type="text" id="updateTitle" placeholder="可选" />
+            </div>
+            <div class="form-group">
+                <label>新 tags (JSON)</label>
+                <input type="text" id="updateTags" placeholder='如 ["js"]' style="min-width:130px" />
+            </div>
+            <div class="form-group">
+                <label>新 categories (JSON)</label>
+                <input type="text" id="updateCategories" placeholder='如 ["前端"]' style="min-width:130px" />
+            </div>
+            <button class="btn btn-primary" onclick="doUpdateBlog()">更新</button>
+        </div>
+        <div class="result-box" id="updateResult">需要管理员 Token</div>
+    </div>
+
+    <!-- 7. 删除博客 & 刷新 -->
+    <div class="card">
+        <h2>🗑️ 7. 删除 / 刷新（需管理员）</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>博客 ID</label>
+                <input type="text" id="deleteId" placeholder="输入要删除的 ID" style="min-width:120px" />
+            </div>
+            <button class="btn btn-danger" onclick="doDeleteBlog()">删除博客</button>
+            <button class="btn btn-secondary" onclick="doRefreshBlogs()">刷新同步 (refresh)</button>
+        </div>
+        <div class="result-box" id="deleteResult">操作结果</div>
+    </div>
+
+    <!-- 8. 权限测试 -->
+    <div class="card">
+        <h2>🛡️ 8. 权限快速测试</h2>
+        <p style="font-size:0.84rem; color:#57606a; margin-bottom:12px;">点击按钮测试不同场景下的认证与权限返回</p>
+        <div class="quick-actions">
+            <button class="btn btn-secondary" onclick="testNoToken()">无 Token 新增博客</button>
+            <button class="btn btn-secondary" onclick="testBadToken()">伪造 Token 新增博客</button>
+            <button class="btn btn-secondary" onclick="testDuplicateRegister()">重复用户名注册</button>
+            <button class="btn btn-secondary" onclick="testWrongPassword()">错误密码登录</button>
+        </div>
+        <div class="result-box" id="permResult">测试结果</div>
+    </div>
+
+    <script>
+        const API = '/gitstatus/api';
+        let token = '';
+
+        function updateStatus() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const role = document.getElementById('roleText');
+            if (token) {
+                dot.classList.add('online');
+                try {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    text.textContent = `已登录: ${payload.username}`;
+                    role.textContent = `角色: ${payload.role}`;
+                } catch {
+                    text.textContent = '已登录 (Token 已设置)';
+                    role.textContent = '';
+                }
+            } else {
+                dot.classList.remove('online');
+                text.textContent = '未登录';
+                role.textContent = '';
+            }
+            document.getElementById('tokenDisplay').textContent = token ? `Token: ${token}` : 'Token: (无)';
+            document.getElementById('tokenDisplay').className = token ? 'token-display has-token' : 'token-display';
+        }
+
+        function authHeaders() {
+            const h = { 'Content-Type': 'application/json' };
+            if (token) h['Authorization'] = `Bearer ${token}`;
+            return h;
+        }
+
+        function showResult(elId, data, ok) {
+            const el = document.getElementById(elId);
+            el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            el.className = `result-box ${ok ? 'success' : 'error'}`;
+        }
+
+        // ==================== 注册 ====================
+        async function doRegister() {
+            const username = document.getElementById('regUsername').value.trim();
+            const password = document.getElementById('regPassword').value;
+            try {
+                const res = await fetch(`${API}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const json = await res.json();
+                showResult('registerResult', json, res.ok);
+                if (json.token) {
+                    token = json.token;
+                    updateStatus();
+                }
+            } catch (e) {
+                showResult('registerResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 登录 ====================
+        async function doLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            try {
+                const res = await fetch(`${API}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const json = await res.json();
+                showResult('loginResult', json, res.ok);
+                if (json.token) {
+                    token = json.token;
+                    updateStatus();
+                }
+            } catch (e) {
+                showResult('loginResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        function doLogout() {
+            token = '';
+            updateStatus();
+            showResult('loginResult', '已清除 Token', true);
+        }
+
+        // ==================== 当前用户 ====================
+        async function doGetMe() {
+            try {
+                const res = await fetch(`${API}/auth/me`, {
+                    headers: authHeaders()
+                });
+                const json = await res.json();
+                showResult('meResult', json, res.ok);
+            } catch (e) {
+                showResult('meResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 博客查询 ====================
+        async function doQueryBlogs() {
+            const params = new URLSearchParams();
+            const id = document.getElementById('queryBlogId').value.trim();
+            const search = document.getElementById('querySearch').value.trim();
+            const tags = document.getElementById('queryTags').value.trim();
+            const categories = document.getElementById('queryCategories').value.trim();
+            const page = document.getElementById('queryPage').value.trim();
+            const pageSize = document.getElementById('queryPageSize').value.trim();
+            if (id) params.set('id', id);
+            if (search) params.set('search', search);
+            if (tags) tags.split(',').forEach(t => params.append('tags', t.trim()));
+            if (categories) categories.split(',').forEach(c => params.append('categories', c.trim()));
+            if (page) params.set('page', page);
+            if (pageSize) params.set('pageSize', pageSize);
+            try {
+                const res = await fetch(`${API}/blogs?${params.toString()}`);
+                const json = await res.json();
+                showResult('queryResult', json, res.ok);
+            } catch (e) {
+                showResult('queryResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 新增博客 ====================
+        async function doCreateBlog() {
+            try {
+                const body = {
+                    title: document.getElementById('newTitle').value.trim(),
+                    tags: JSON.parse(document.getElementById('newTags').value || '[]'),
+                    categories: JSON.parse(document.getElementById('newCategories').value || '[]'),
+                    excerpt: document.getElementById('newExcerpt').value.trim(),
+                    cover: document.getElementById('newCover').value.trim() || undefined,
+                };
+                const res = await fetch(`${API}/blogs`, {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify(body)
+                });
+                const json = await res.json();
+                showResult('createResult', json, res.ok);
+            } catch (e) {
+                showResult('createResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 更新博客 ====================
+        async function doUpdateBlog() {
+            const id = document.getElementById('updateId').value.trim();
+            if (!id) { showResult('updateResult', '请输入博客 ID', false); return; }
+            try {
+                const body = {};
+                const title = document.getElementById('updateTitle').value.trim();
+                const tags = document.getElementById('updateTags').value.trim();
+                const categories = document.getElementById('updateCategories').value.trim();
+                if (title) body.title = title;
+                if (tags) body.tags = JSON.parse(tags);
+                if (categories) body.categories = JSON.parse(categories);
+                const res = await fetch(`${API}/blogs/${id}`, {
+                    method: 'PATCH',
+                    headers: authHeaders(),
+                    body: JSON.stringify(body)
+                });
+                const json = await res.json();
+                showResult('updateResult', json, res.ok);
+            } catch (e) {
+                showResult('updateResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 删除博客 ====================
+        async function doDeleteBlog() {
+            const id = document.getElementById('deleteId').value.trim();
+            if (!id) { showResult('deleteResult', '请输入博客 ID', false); return; }
+            try {
+                const res = await fetch(`${API}/blogs/${id}`, {
+                    method: 'DELETE',
+                    headers: authHeaders()
+                });
+                const json = await res.json();
+                showResult('deleteResult', json, res.ok);
+            } catch (e) {
+                showResult('deleteResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 刷新同步 ====================
+        async function doRefreshBlogs() {
+            try {
+                const res = await fetch(`${API}/blogs/refresh`, {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+                const json = await res.json();
+                showResult('deleteResult', json, res.ok);
+            } catch (e) {
+                showResult('deleteResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // ==================== 权限快速测试 ====================
+        async function testNoToken() {
+            try {
+                const res = await fetch(`${API}/blogs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: '无Token测试' })
+                });
+                const json = await res.json();
+                showResult('permResult', { scenario: '无 Token 新增博客', status: res.status, ...json }, !res.ok);
+            } catch (e) {
+                showResult('permResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        async function testBadToken() {
+            try {
+                const res = await fetch(`${API}/blogs`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer fake.invalid.token'
+                    },
+                    body: JSON.stringify({ title: '伪造Token测试' })
+                });
+                const json = await res.json();
+                showResult('permResult', { scenario: '伪造 Token 新增博客', status: res.status, ...json }, !res.ok);
+            } catch (e) {
+                showResult('permResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        async function testDuplicateRegister() {
+            try {
+                const res = await fetch(`${API}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'admin', password: '123456' })
+                });
+                const json = await res.json();
+                showResult('permResult', { scenario: '重复用户名注册', status: res.status, ...json }, !res.ok);
+            } catch (e) {
+                showResult('permResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        async function testWrongPassword() {
+            try {
+                const res = await fetch(`${API}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'admin', password: 'wrong_password' })
+                });
+                const json = await res.json();
+                showResult('permResult', { scenario: '错误密码登录', status: res.status, ...json }, !res.ok);
+            } catch (e) {
+                showResult('permResult', `请求失败: ${e.message}`, false);
+            }
+        }
+
+        // 初始化
+        updateStatus();
+    </script>
+</body>
+
+</html>

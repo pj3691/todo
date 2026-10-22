@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>账号管理 · GitStatus</title>
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <style>
+        /* 与顶栏使用同一贴边间距，避免内容与 header 错位 */
+        main.page {
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            padding: 12px 14px 40px;
+        }
+
+        @media (max-width: 1020px) {
+            main.page {
+                padding: 9px 10px 32px;
+            }
+        }
+
+        .page-head {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .page-head h1 {
+            margin-top: 3px;
+            font-size: 1.7rem;
+            font-weight: 760;
+            letter-spacing: -0.04em;
+        }
+
+        .page-head p {
+            margin-top: 5px;
+            color: var(--muted);
+            font-size: 0.84rem;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar .text-input {
+            width: 210px;
+            height: 36px;
+        }
+
+        .toolbar .control {
+            height: 36px;
+            min-width: 108px;
+        }
+
+        .result-count {
+            color: var(--muted);
+            font-size: 0.76rem;
+        }
+
+        .result-count strong {
+            color: var(--text);
+            font-weight: 760;
+        }
+
+        .row-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .user-name-cell {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .user-id-cell {
+            color: var(--muted);
+            font-family: var(--mono);
+            font-size: 0.72rem;
+        }
+
+        .table-empty {
+            padding: 34px 16px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        .denied-actions {
+            display: flex;
+            gap: 9px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .toast-icon svg {
+            width: 12px;
+            height: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="/pages/index.html" aria-label="GitStatus 首页">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 3v18h18"></path>
+                        <polyline points="7 14 11 10 15 13 21 6"></polyline>
+                    </svg>
+                </span>
+                <span class="brand-copy">
+                    <strong>GitStatus</strong>
+                    <small>Code Insights</small>
+                </span>
+            </a>
+
+            <nav class="top-nav" aria-label="主导航">
+                <a href="/pages/index.html">Git 洞察</a>
+                <a href="/pages/todo.html">待办清单</a>
+                <a class="active hidden" id="navAccountLink" href="/pages/account.html" aria-current="page">账号管理</a>
+            </nav>
+
+            <div class="topbar-actions">
+                <div class="user-menu" id="userMenu">
+                    <button class="user-trigger" id="userTrigger" type="button" aria-haspopup="true" aria-expanded="false" title="账号信息">
+                        <span class="avatar" id="userAvatar" aria-hidden="true">?</span>
+                    </button>
+                    <div class="user-popover" role="dialog" aria-label="账号信息">
+                        <div class="user-popover-head">
+                            <span class="user-popover-name" id="userName">未登录</span>
+                            <span class="user-popover-role" id="userRole">请先登录</span>
+                        </div>
+                        <div class="user-popover-meta">
+                            <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
+                            <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                        </div>
+                        <div class="user-popover-actions">
+                            <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
+                            <button class="btn btn-sm btn-primary hidden" id="userLoginBtn" type="button">登录</button>
+                            <button class="btn btn-sm btn-ghost hidden" id="logoutBtn" type="button">退出</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="page">
+        <div class="page-head">
+            <div>
+                <span class="modal-kicker">Administration</span>
+                <h1>账号管理</h1>
+                <p>管理所有用户、分配角色、启用或禁用账号</p>
+            </div>
+            <div class="toolbar">
+                <input class="text-input" id="searchInput" type="search" placeholder="搜索用户名" autocomplete="off" />
+                <select class="control" id="roleFilter" aria-label="角色筛选">
+                    <option value="">全部角色</option>
+                    <option value="admin">管理员</option>
+                    <option value="readwrite">读写</option>
+                    <option value="readonly">只读</option>
+                </select>
+                <select class="control" id="statusFilter" aria-label="状态筛选">
+                    <option value="">全部状态</option>
+                    <option value="active">已启用</option>
+                    <option value="disabled">已禁用</option>
+                </select>
+                <button class="btn" id="reloadBtn" type="button">刷新</button>
+                <button class="btn btn-primary" id="createUserBtn" type="button">新建用户</button>
+            </div>
+        </div>
+
+        <div class="empty-state hidden" id="deniedState">
+            <h3 id="deniedTitle">需要管理员权限</h3>
+            <p id="deniedMessage">账号管理仅对管理员开放，请使用管理员账号登录。</p>
+            <div class="denied-actions">
+                <a class="btn btn-primary" href="/pages/index.html">返回 Git 洞察</a>
+                <a class="btn" href="/pages/todo.html">前往待办页登录</a>
+            </div>
+        </div>
+
+        <div class="card hidden" id="pageBody">
+            <div class="card-header">
+                <h2>用户列表</h2>
+                <span class="result-count">共 <strong id="totalCount">0</strong> 个用户</span>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>状态</th>
+                                <th>创建时间</th>
+                                <th>最近登录</th>
+                                <th style="width:220px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="table-empty hidden" id="listEmpty">没有符合条件的用户</div>
+                <div class="pagination-bar">
+                    <span class="page-size-wrap">第 <strong id="pageInfo">1 / 1</strong> 页</span>
+                    <div class="pagination" id="pagination"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="false"></div>
+
+    <div class="modal-layer" id="userModal" aria-hidden="true">
+        <div class="modal is-narrow" role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-kicker">Account</span>
+                    <h2 id="userModalTitle">新建用户</h2>
+                    <p id="userModalHint">创建账号并分配角色</p>
+                </div>
+                <button class="icon-btn" id="closeUserModalBtn" type="button" aria-label="关闭">✕</button>
+            </div>
+            <form id="userForm">
+                <div class="modal-body">
+                    <div class="field">
+                        <label class="field-label" for="formUsername">用户名 <span class="field-required">*</span></label>
+                        <input class="text-input" id="formUsername" type="text" autocomplete="off" placeholder="3-32 个字符" />
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="formPassword">密码 <span class="field-required" id="passwordRequired">*</span></label>
+                        <input class="text-input" id="formPassword" type="password" autocomplete="new-password" placeholder="至少 6 个字符" />
+                        <p class="field-hint" id="passwordHint">至少 6 个字符</p>
+                    </div>
+                    <div class="form-grid">
+                        <div class="field">
+                            <label class="field-label" for="formRole">角色</label>
+                            <select class="select-input" id="formRole">
+                                <option value="readonly">只读</option>
+                                <option value="readwrite">读写</option>
+                                <option value="admin" id="roleAdminOption">管理员</option>
+                            </select>
+                            <p class="field-hint" id="roleHint">系统有且只有一个管理员；如需更换，请编辑目标用户并选择“管理员”。</p>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="formStatus">状态</label>
+                            <select class="select-input" id="formStatus">
+                                <option value="active">已启用</option>
+                                <option value="disabled">已禁用</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-error hidden" id="formError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" type="button" id="cancelUserBtn">取消</button>
+                    <button class="btn btn-primary" type="submit" id="saveUserBtn">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-layer" id="transferModal" aria-hidden="true">
+        <div class="modal is-narrow" role="dialog" aria-modal="true" aria-labelledby="transferModalTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-kicker">Migration</span>
+                    <h2 id="transferModalTitle">迁移用户数据</h2>
+                    <p id="transferModalHint">把源用户的全部待办数据迁移给另一个用户</p>
+                </div>
+                <button class="icon-btn" id="closeTransferBtn" type="button" aria-label="关闭">✕</button>
+            </div>
+            <form id="transferForm">
+                <div class="modal-body">
+                    <div class="field">
+                        <label class="field-label" for="transferSourceName">源用户</label>
+                        <input class="text-input" id="transferSourceName" type="text" readonly />
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="transferTargetSelect">目标用户</label>
+                        <select class="select-input" id="transferTargetSelect"></select>
+                        <p class="field-hint">
+                            会迁移源用户的分类、标签、待办和图片；源用户的这些数据将被清空，目标用户已有的同名分类/标签会自动合并。
+                        </p>
+                    </div>
+                    <div class="form-error hidden" id="transferError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" type="button" id="cancelTransferBtn">取消</button>
+                    <button class="btn btn-primary" type="submit" id="confirmTransferBtn">确认迁移</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/pages/assets/js/auth-client.js"></script>
+    <script src="/pages/assets/js/account.js"></script>
+</body>
+
+</html>

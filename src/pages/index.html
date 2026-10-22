@@ -1,0 +1,1861 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Git 全景洞察 | 热力图 + 统计曲线 + 分页记录</title>
+    <!-- 共享主题与组件样式（本地文件，零网络依赖） -->
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <!-- 图表库：本地 vendor，避免 CDN 依赖 -->
+    <script src="/pages/assets/vendor/chart.umd.js"></script>
+    <script src="/pages/assets/vendor/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            padding: 0;
+        }
+
+        /* 顶部导航由共享 components.css 统一控制为全宽 flex 布局 */
+
+        /* 内容区与顶栏使用同一贴边间距，避免左右错位 */
+        main.page {
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            padding: 12px 14px 40px;
+        }
+
+        @media (max-width: 1020px) {
+            main.page {
+                padding: 9px 10px 32px;
+            }
+        }
+
+        /* 头部：与 todo 页的面板视觉保持一致 */
+        .dashboard-header {
+            position: relative;
+            background: rgba(255, 255, 255, 0.86);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            -webkit-backdrop-filter: blur(10px);
+            backdrop-filter: blur(10px);
+            padding: 20px 22px;
+            margin-bottom: 22px;
+        }
+
+        .header-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .dashboard-header h1 {
+            font-size: 1.75rem;
+            font-weight: 740;
+            letter-spacing: -0.045em;
+            background: linear-gradient(135deg, #238c59, #145d3a);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            display: inline-block;
+        }
+
+        .dashboard-header p {
+            color: var(--muted);
+            margin-top: 6px;
+            font-size: 0.86rem;
+        }
+
+        .repo-controls {
+            margin-top: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-md);
+            background: var(--surface-soft);
+        }
+
+        .repo-select {
+            min-width: 260px;
+            max-width: 300px;
+        }
+
+        .branch-filter-select {
+            min-width: 140px;
+            max-width: 220px;
+        }
+
+        .repo-display {
+            display: flex;
+            gap: 10px;
+            flex: 1;
+            min-width: 0;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .repo-display-item {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            padding: 7px 10px;
+            font-size: 0.8rem;
+            color: var(--text);
+            width: 100%;
+            max-width: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .repo-display-item strong {
+            color: var(--muted);
+            margin-right: 6px;
+            font-weight: 650;
+        }
+
+        .repo-editor-panel {
+            display: none;
+            margin-top: 12px;
+            padding: 14px;
+            border-radius: var(--radius-md);
+            border: 1px dashed var(--line-strong);
+            background: var(--surface-soft);
+        }
+
+        .repo-editor-panel.active {
+            display: block;
+        }
+
+        .repo-editor-title {
+            font-size: 0.85rem;
+            color: var(--text-soft);
+            margin-bottom: 10px;
+            font-weight: 720;
+        }
+
+        .repo-editor-fields {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .repo-editor-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .repo-input {
+            min-width: 260px;
+            flex: 1;
+            min-height: 40px;
+            border-radius: 11px;
+            border: 1px solid var(--line-strong);
+            padding: 8px 12px;
+            background: #fff;
+            color: var(--text);
+            font-size: 0.83rem;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+        }
+
+        .repo-input:hover {
+            border-color: #b8c8bc;
+        }
+
+        .repo-input:focus {
+            outline: none;
+            border-color: #73b38f;
+            box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.11);
+            background: #fff;
+        }
+
+        /* 按钮统一使用共享组件样式：.btn / .btn-primary / .btn-ghost */
+
+        /* 卡片：视觉来自共享 components.css，这里只保留折叠与表格布局 */
+        .card {
+            margin-bottom: 22px;
+        }
+
+        .card-header {
+            cursor: pointer;
+        }
+
+        .card-header select,
+        .card-header button,
+        .card-header input,
+        .card-header a {
+            cursor: auto;
+        }
+
+        .card.collapsed .card-body {
+            display: none;
+        }
+
+        .table-responsive {
+            border-radius: var(--radius-md);
+        }
+
+        .data-table {
+            min-width: 680px;
+        }
+
+        .additions {
+            color: var(--green-strong);
+            font-weight: 650;
+            background: var(--green-soft);
+            padding: 2px 8px;
+            border-radius: 999px;
+            display: inline-block;
+            font-size: 0.76rem;
+        }
+
+        .deletions {
+            color: var(--red);
+            font-weight: 650;
+            background: var(--red-soft);
+            padding: 2px 8px;
+            border-radius: 999px;
+            display: inline-block;
+            font-size: 0.76rem;
+        }
+
+        .net-positive {
+            color: var(--green-strong);
+            font-weight: 700;
+        }
+
+        .net-negative {
+            color: var(--red);
+            font-weight: 700;
+        }
+
+        .hash-short {
+            font-family: var(--mono);
+            background: var(--surface-muted);
+            color: var(--text-soft);
+            padding: 3px 6px;
+            border-radius: 8px;
+            font-size: 0.72rem;
+        }
+
+        /* 分页控件：shell 与共享 components.css 对齐 */
+        .pagination-wrapper {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-top: 20px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+        }
+
+        .page-btn.disabled {
+            opacity: 0.36;
+            cursor: not-allowed;
+        }
+
+        .page-size-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 0.78rem;
+        }
+
+        select,
+        .repo-select,
+        .year-selector,
+        #pageSizeSelect,
+        #dailyPageSizeSelect {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            min-height: 40px;
+            border-radius: 10px;
+            border: 1px solid var(--line-strong);
+            padding: 8px 36px 8px 11px;
+            background-color: #fff;
+            background-image:
+                linear-gradient(45deg, transparent 50%, #6c7d71 50%),
+                linear-gradient(135deg, #6c7d71 50%, transparent 50%);
+            background-position:
+                calc(100% - 18px) calc(50% - 2px),
+                calc(100% - 12px) calc(50% - 2px);
+            background-size: 6px 6px, 6px 6px;
+            background-repeat: no-repeat;
+            color: var(--text-soft);
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+            cursor: pointer;
+        }
+
+        select:hover,
+        .repo-select:hover,
+        .year-selector:hover,
+        #pageSizeSelect:hover,
+        #dailyPageSizeSelect:hover {
+            border-color: #b8c8bc;
+            background-color: var(--surface-soft);
+        }
+
+        select:focus,
+        .repo-select:focus,
+        .year-selector:focus,
+        #pageSizeSelect:focus,
+        #dailyPageSizeSelect:focus {
+            outline: none;
+            border-color: #73b38f;
+            box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.11);
+            background-color: #fff;
+        }
+
+        select:disabled {
+            cursor: not-allowed;
+            opacity: 0.7;
+            background-color: var(--surface-muted);
+        }
+
+        select option {
+            color: var(--text);
+            background: #fff;
+        }
+
+        /* 每日统计表格 */
+        .stats-table th,
+        .stats-table td {
+            text-align: center;
+        }
+
+        .stats-table th:first-child,
+        .stats-table td:first-child {
+            text-align: left;
+            font-weight: 600;
+        }
+
+        /* 曲线图容器 */
+        .chart-container {
+            position: relative;
+            height: 360px;
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .chart-container #trendChart {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+
+        .badge-light {
+            background: var(--surface-muted);
+            color: var(--muted);
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-size: 0.68rem;
+            font-weight: 650;
+        }
+
+        .total-stats {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+
+        .stat-pill {
+            background: var(--surface-soft);
+            border: 1px solid var(--line);
+            color: var(--text-soft);
+            padding: 7px 14px;
+            border-radius: 999px;
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+
+        .stat-pill strong {
+            color: var(--text);
+            font-weight: 760;
+        }
+
+        /* ---------- GitHub 风格热力图 ---------- */
+        .heatmap-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .year-selector {
+            font-weight: 500;
+            font-size: 0.9rem;
+            min-width: 120px;
+        }
+
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.7rem;
+        }
+
+        .legend-colors {
+            display: flex;
+            gap: 4px;
+        }
+
+        .legend-color {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+        }
+
+        .heatmap-grid {
+            overflow-x: hidden;
+            padding: 12px 0 8px 0;
+            width: 100%;
+        }
+
+        .heatmap-months {
+            display: grid;
+            margin-left: 36px;
+            margin-bottom: 8px;
+            font-size: 0.7rem;
+            color: #57606a;
+            width: max-content;
+        }
+
+        .month-label {
+            min-width: 18px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .heatmap-wrapper {
+            display: flex;
+            width: 100%;
+            align-items: flex-start;
+        }
+
+        .weekdays {
+            display: grid;
+            font-size: 0.65rem;
+            color: #57606a;
+            width: 28px;
+            padding-right: 8px;
+            text-align: right;
+        }
+
+        .weekday {
+            line-height: 1;
+        }
+
+        .heatmap-cells {
+            width: calc(100% - 36px);
+        }
+
+        .heatmap-cell {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            background-color: #ebedf0;
+            transition: 0.1s ease;
+            cursor: pointer;
+        }
+
+        .heatmap-cell:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 0 1px #1f2328;
+            z-index: 2;
+        }
+
+        .tooltip-heat {
+            position: absolute;
+            background: #1f2328cc;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            pointer-events: none;
+            z-index: 100;
+            white-space: nowrap;
+        }
+
+        footer {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #6e7781;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 800px) {
+            .card-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .dashboard-header {
+                padding: 14px;
+            }
+
+            .repo-controls {
+                padding: 10px;
+                gap: 10px;
+            }
+
+            .repo-select,
+            .branch-filter-select,
+            .repo-input,
+            .btn {
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .repo-display {
+                min-width: 100%;
+            }
+
+            .repo-display-item {
+                width: 100%;
+            }
+
+            .repo-editor-actions {
+                flex-wrap: wrap;
+            }
+        }
+
+        /* 顶部导航与用户区来自共享 components.css */
+
+        /* 登录遮罩：与 todo 弹窗视觉一致 */
+        .login-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(9, 27, 16, 0.43);
+            -webkit-backdrop-filter: blur(7px);
+            backdrop-filter: blur(7px);
+        }
+
+        .login-overlay.hidden {
+            display: none;
+        }
+
+        .login-card {
+            width: min(400px, 100%);
+            padding: 26px 24px;
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            border-radius: var(--radius-xl);
+            background: var(--surface);
+            box-shadow: var(--shadow-lg);
+            animation: modal-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+
+        .login-card h2 {
+            margin: 0;
+            font-size: 1.24rem;
+            letter-spacing: -0.025em;
+        }
+
+        .login-card > p {
+            margin: 5px 0 20px;
+            color: var(--muted);
+            font-size: 0.75rem;
+        }
+
+        .login-error {
+            min-height: 18px;
+            margin-bottom: 8px;
+            color: var(--red);
+            font-size: 0.74rem;
+            font-weight: 600;
+        }
+
+        .login-submit {
+            width: 100%;
+            margin-top: 4px;
+        }
+
+        .login-submit:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        .login-link {
+            display: block;
+            margin-top: 14px;
+            text-align: center;
+            color: var(--green-strong);
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 登录遮罩：仓库数据需要登录后查看 -->
+    <div class="login-overlay" id="loginOverlay">
+        <form class="login-card" id="loginForm">
+            <span class="modal-kicker">GitStatus</span>
+            <h2>登录</h2>
+            <p>仓库管理需要登录，读写权限由管理员分配</p>
+            <div class="field">
+                <label class="field-label" for="loginUsername">用户名</label>
+                <input class="text-input" id="loginUsername" type="text" autocomplete="username" placeholder="请输入用户名" required />
+            </div>
+            <div class="field">
+                <label class="field-label" for="loginPassword">密码</label>
+                <input class="text-input" id="loginPassword" type="password" autocomplete="current-password" placeholder="请输入密码" required />
+            </div>
+            <div class="login-error" id="loginError"></div>
+            <button class="btn btn-primary login-submit" id="loginSubmitBtn" type="submit">登录</button>
+            <a class="login-link" href="/pages/todo.html">没有账号？前往待办页注册</a>
+        </form>
+    </div>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="/pages/index.html" aria-label="GitStatus 首页">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 3v18h18"></path>
+                        <polyline points="7 14 11 10 15 13 21 6"></polyline>
+                    </svg>
+                </span>
+                <span class="brand-copy">
+                    <strong>GitStatus</strong>
+                    <small>Code Insights</small>
+                </span>
+            </a>
+
+            <nav class="top-nav" aria-label="主导航">
+                <a class="active" href="/pages/index.html" aria-current="page">Git 洞察</a>
+                <a href="/pages/todo.html">待办清单</a>
+                <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
+            </nav>
+
+            <div class="topbar-actions">
+                <div class="user-menu" id="userMenu">
+                    <button class="user-trigger" id="userTrigger" type="button" aria-haspopup="true" aria-expanded="false" title="账号信息">
+                        <span class="avatar" id="userAvatar" aria-hidden="true">?</span>
+                    </button>
+                    <div class="user-popover" role="dialog" aria-label="账号信息">
+                        <div class="user-popover-head">
+                            <span class="user-popover-name" id="userName">未登录</span>
+                            <span class="user-popover-role" id="userRole">请先登录</span>
+                        </div>
+                        <div class="user-popover-meta">
+                            <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
+                            <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                        </div>
+                        <div class="user-popover-actions">
+                            <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
+                            <button class="btn btn-sm btn-primary hidden" id="userLoginBtn" type="button">登录</button>
+                            <button class="btn btn-sm btn-ghost hidden" id="logoutBtn" type="button">退出</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <main class="page">
+        <div class="dashboard-header">
+            <div class="header-top">
+                <div>
+                    <h1>📊 Git 全景洞察</h1>
+                    <p>热力图 · 提交历史 · 每日活跃度 · 代码变更趋势</p>
+                </div>
+            </div>
+            <div class="repo-controls">
+                <select id="repoSelect" class="repo-select">
+                    <option value="">请选择仓库</option>
+                </select>
+                <select id="repoBranchFilterSelect" class="branch-filter-select">
+                    <option value="">分支</option>
+                </select>
+                <div class="repo-display">
+                    <div class="repo-display-item"><strong>地址</strong><span id="repoDisplayUrl">-</span></div>
+                </div>
+                <button id="refreshRepoBtn" class="btn btn-primary">刷新</button>
+                <button id="addRepoBtn" class="btn">添加仓库</button>
+                <button id="updateRepoBtn" class="btn">修改仓库</button>
+            </div>
+            <div id="repoEditorPanel" class="repo-editor-panel">
+                <div id="repoEditorTitle" class="repo-editor-title">新增仓库</div>
+                <div class="repo-editor-fields">
+                    <input id="repoNameInput" class="repo-input" type="text" placeholder="输入仓库名称" />
+                    <input id="repoInput" class="repo-input" type="text"
+                        placeholder="输入仓库地址，例如 D:/xxxx/xxxx/xxxx" />
+                    <select id="repoDefaultBranchSelect" class="repo-input"></select>
+                </div>
+                <div class="repo-editor-actions">
+                    <button id="confirmRepoBtn" class="btn btn-primary">确定</button>
+                    <button id="cancelRepoBtn" class="btn">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========= 热力图卡片 ========= -->
+        <div class="card">
+            <div class="card-header">
+                <h2>🔥 提交热力图 · GitHub 风格</h2>
+                <div class="heatmap-controls">
+                    <select id="heatmapYearSelect" class="year-selector"></select>
+                    <div class="heatmap-legend">
+                        <span>少</span>
+                        <div class="legend-colors">
+                            <div class="legend-color" style="background:#ebedf0"></div>
+                            <div class="legend-color" style="background:#9be9a8"></div>
+                            <div class="legend-color" style="background:#40c463"></div>
+                            <div class="legend-color" style="background:#30a14e"></div>
+                            <div class="legend-color" style="background:#216e39"></div>
+                        </div>
+                        <span>多</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="heatmap-grid" id="heatmapGridContainer">
+                    <div class="heatmap-months" id="monthLabels"></div>
+                    <div class="heatmap-wrapper">
+                        <div class="weekdays" id="weekdayLabels"></div>
+                        <div id="heatmapCells" class="heatmap-cells"></div>
+                    </div>
+                </div>
+                <div style="font-size:0.7rem; text-align:center; margin-top:12px; color:#57606a;">
+                    💡 每个格子代表一天，颜色深浅表示当日提交次数
+                </div>
+            </div>
+        </div>
+
+        <!-- 提交记录卡片 (分页表格) -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📜 提交历史记录</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="data-table" id="commitsTable">
+                        <thead>
+                            <tr>
+                                <th>Hash</th>
+                                <th>日期</th>
+                                <th>作者</th>
+                                <th>增加</th>
+                                <th>删除</th>
+                                <th>净增</th>
+                                <th>文件数</th>
+                                <th>描述</th>
+                            </tr>
+                        </thead>
+                        <tbody id="commitTableBody">
+                            <tr>
+                                <td colspan="8" style="text-align:center;">加载数据中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination-wrapper">
+                    <div class="page-size-selector"><span>每页显示</span><select id="pageSizeSelect">
+                            <option value="10">10条</option>
+                            <option value="15" selected>15条</option>
+                            <option value="20">20条</option>
+                            <option value="30">30条</option>
+                        </select></div>
+                    <div class="pagination" id="paginationControls"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计曲线卡片 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📈 代码变更趋势曲线</h2>
+            </div>
+            <div class="card-body">
+                <div class="chart-container"><canvas id="trendChart"></canvas></div>
+                <div class="total-stats"><span class="stat-pill">✅ 总提交次数: <strong
+                            id="totalCommitsCount">0</strong></span><span class="stat-pill">➕ 总增加行: <strong
+                            id="totalAdditionsCount">0</strong></span><span class="stat-pill">➖ 总删除行: <strong
+                            id="totalDeletionsCount">0</strong></span></div>
+            </div>
+        </div>
+
+        <!-- 每日提交统计表格 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📅 每日提交统计 · 类 GitHub 活跃表</h2>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="data-table stats-table" id="dailyStatsTable">
+                        <thead>
+                            <tr>
+                                <th>日期 (UTC+8)</th>
+                                <th>提交次数</th>
+                                <th>总增加</th>
+                                <th>总删除</th>
+                                <th>净增行数</th>
+                                <th>活跃指数</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dailyStatsBody">
+                            <tr>
+                                <td colspan="6">计算统计数据中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination-wrapper">
+                    <div class="page-size-selector"><span>每页显示</span><select id="dailyPageSizeSelect">
+                            <option value="10">10天</option>
+                            <option value="15" selected>15天</option>
+                            <option value="20">20天</option>
+                            <option value="30">30天</option>
+                        </select></div>
+                    <div class="pagination" id="dailyPaginationControls"></div>
+                </div>
+            </div>
+        </div>
+        <footer>基于 Git 日志聚合 | 分页表格 + 每日统计 + 趋势曲线 + 热力图 (年份切换)</footer>
+    </main>
+
+    <script>
+        // ============================================================
+        // 认证：复用待办页登录态，仓库接口需要携带 Bearer Token
+        // ============================================================
+        const API_BASE = '/gitstatus/api';
+        const AUTH_TOKEN_KEY = 'gitstatus_todo_token';
+        const AUTH_USER_KEY = 'gitstatus_todo_user';
+        const ROLE_LABELS = { admin: '管理员', readwrite: '读写', readonly: '只读' };
+        const STATUS_LABELS = { active: '已启用', disabled: '已禁用' };
+
+        let authToken = '';
+        let authUser = null;
+
+        function readStorage(key) {
+            try { return localStorage.getItem(key); } catch { return null; }
+        }
+        function writeStorage(key, value) {
+            try {
+                if (value === null || value === undefined) localStorage.removeItem(key);
+                else localStorage.setItem(key, value);
+            } catch { /* 隐私模式下 localStorage 可能不可用 */ }
+        }
+        function safeJsonParse(raw) {
+            if (!raw) return null;
+            try { return JSON.parse(raw); } catch { return null; }
+        }
+        function clearAuth() {
+            authToken = '';
+            authUser = null;
+            writeStorage(AUTH_TOKEN_KEY, null);
+            writeStorage(AUTH_USER_KEY, null);
+            renderAuthBar();
+            applyRolePermissions();
+        }
+        function persistAuth() {
+            writeStorage(AUTH_TOKEN_KEY, authToken || null);
+            writeStorage(AUTH_USER_KEY, authUser ? JSON.stringify(authUser) : null);
+        }
+        function renderAuthBar() {
+            const nameEl = document.getElementById('userName');
+            const roleEl = document.getElementById('userRole');
+            const avatarEl = document.getElementById('userAvatar');
+            const statusEl = document.getElementById('popoverStatus');
+            const lastLoginEl = document.getElementById('popoverLastLogin');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const loginBtn = document.getElementById('userLoginBtn');
+            const manageLink = document.getElementById('accountManageLink');
+            const navAccountLink = document.getElementById('navAccountLink');
+            if (!nameEl) return;
+            if (!authUser) {
+                nameEl.textContent = '未登录';
+                if (roleEl) roleEl.textContent = '请先登录';
+                if (avatarEl) avatarEl.textContent = '?';
+                if (statusEl) statusEl.textContent = '—';
+                if (lastLoginEl) lastLoginEl.textContent = '—';
+                if (logoutBtn) logoutBtn.classList.add('hidden');
+                if (loginBtn) loginBtn.classList.remove('hidden');
+                if (manageLink) manageLink.classList.add('hidden');
+                if (navAccountLink) navAccountLink.classList.add('hidden');
+                return;
+            }
+            nameEl.textContent = authUser.username;
+            if (roleEl) roleEl.textContent = ROLE_LABELS[authUser.role] || authUser.role || '';
+            if (avatarEl) avatarEl.textContent = String(authUser.username || '?').slice(0, 1).toUpperCase();
+            if (statusEl) statusEl.textContent = STATUS_LABELS[authUser.status] || '—';
+            if (lastLoginEl) lastLoginEl.textContent = authUser.lastLoginAt || '—';
+            if (logoutBtn) logoutBtn.classList.remove('hidden');
+            if (loginBtn) loginBtn.classList.add('hidden');
+            const isAdmin = authUser.role === 'admin';
+            if (manageLink) manageLink.classList.toggle('hidden', !isAdmin);
+            if (navAccountLink) navAccountLink.classList.toggle('hidden', !isAdmin);
+        }
+        function canWrite() {
+            return Boolean(authUser && (authUser.role === 'admin' || authUser.role === 'readwrite'));
+        }
+        function applyRolePermissions() {
+            const writable = canWrite();
+            ['addRepoBtn', 'updateRepoBtn', 'refreshRepoBtn', 'confirmRepoBtn'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.disabled = !writable;
+                el.title = writable ? '' : '当前账号为只读权限，无法修改仓库';
+            });
+        }
+        function showLogin(message) {
+            const overlay = document.getElementById('loginOverlay');
+            const error = document.getElementById('loginError');
+            if (overlay) overlay.classList.remove('hidden');
+            if (error) error.textContent = message || '';
+            const usernameInput = document.getElementById('loginUsername');
+            if (usernameInput && !usernameInput.value) usernameInput.focus();
+        }
+        function hideLogin() {
+            const overlay = document.getElementById('loginOverlay');
+            if (overlay) overlay.classList.add('hidden');
+        }
+        async function apiFetch(path, options = {}) {
+            const headers = new Headers(options.headers || {});
+            if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
+            const res = await fetch(path, { ...options, headers });
+            if (res.status === 401) {
+                clearAuth();
+                showLogin('登录已过期，请重新登录');
+                throw new Error('登录已过期，请重新登录');
+            }
+            return res;
+        }
+        async function loadCurrentUser() {
+            if (!authToken) return false;
+            try {
+                const res = await fetch(`${API_BASE}/auth/me`, {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+                if (!res.ok) return false;
+                const json = await res.json();
+                if (!json.res || !json.user) return false;
+                authUser = json.user;
+                persistAuth();
+                return true;
+            } catch {
+                return false;
+            }
+        }
+        function setupAuthUi() {
+            const form = document.getElementById('loginForm');
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (form) {
+                form.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    const username = (document.getElementById('loginUsername').value || '').trim();
+                    const password = document.getElementById('loginPassword').value || '';
+                    const error = document.getElementById('loginError');
+                    const submitBtn = document.getElementById('loginSubmitBtn');
+                    if (!username || !password) {
+                        if (error) error.textContent = '请输入用户名和密码';
+                        return;
+                    }
+                    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '登录中...'; }
+                    try {
+                        const res = await fetch(`${API_BASE}/auth/login`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username, password })
+                        });
+                        const json = await res.json().catch(() => ({}));
+                        if (!res.ok || !json.res) {
+                            if (error) error.textContent = json.message || `登录失败（${res.status}）`;
+                            return;
+                        }
+                        authToken = json.token;
+                        authUser = json.user;
+                        persistAuth();
+                        location.reload();
+                    } catch (err) {
+                        if (error) error.textContent = err?.message || '网络错误，请稍后重试';
+                    } finally {
+                        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '登录'; }
+                    }
+                });
+            }
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', () => {
+                    clearAuth();
+                    location.reload();
+                });
+            }
+
+            // 账号图标：未登录时直接唤起登录框，已登录时支持点击展开信息卡
+            const userMenu = document.getElementById('userMenu');
+            const trigger = document.getElementById('userTrigger');
+            const loginBtn = document.getElementById('userLoginBtn');
+            if (trigger && userMenu) {
+                trigger.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    if (!authUser) {
+                        showLogin('');
+                        return;
+                    }
+                    const open = userMenu.classList.toggle('is-open');
+                    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+                });
+            }
+            if (loginBtn) {
+                loginBtn.addEventListener('click', () => showLogin(''));
+            }
+            document.addEventListener('click', (event) => {
+                if (!userMenu || userMenu.contains(event.target)) return;
+                userMenu.classList.remove('is-open');
+                if (trigger) trigger.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        // --------------------------------------------------------------
+        // 1. MOCK 接口: 模拟后端获取全量 Git 提交数据 (支持按年份筛选热力图)
+        // 生成 2024、2025、2026 三年丰富数据，让热力图有内容
+        // --------------------------------------------------------------
+        function generateFullMockCommits() {
+            const authors = [
+                { name: "pj3691", email: "pj3691@github.com" },
+                { name: "alex_dev", email: "alex@example.com" },
+                { name: "maria_chen", email: "maria@gitlab.com" },
+                { name: "james_li", email: "james@opensource.org" }
+            ];
+            const messages = [
+                "feat: 新增功能", "fix: 修复Bug", "docs: 更新文档", "refactor: 重构代码",
+                "style: 样式调整", "perf: 性能优化", "chore: 依赖更新", "test: 单元测试",
+                "merge: 合并分支", "feat: 暗黑模式支持"
+            ];
+            const fileNames = ["src/main.js", "src/utils.js", "styles/app.css", "index.html", "api/git.js", "components/Table.js"];
+
+            const randomHash = () => Array.from({ length: 40 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join('');
+
+            // 生成三年数据: 2024-01-01 至 2026-04-09
+            const startYear = 2024;
+            const endDate = new Date(2026, 3, 9); // 2026-04-09
+            const commits = [];
+
+            for (let year = startYear; year <= 2026; year++) {
+                const startOfYear = new Date(year, 0, 1);
+                const endOfYear = (year === 2026) ? endDate : new Date(year, 11, 31);
+                const daysDiff = Math.floor((endOfYear - startOfYear) / (1000 * 60 * 60 * 24)) + 1;
+                for (let dayOffset = 0; dayOffset < daysDiff; dayOffset++) {
+                    const currentDate = new Date(startOfYear);
+                    currentDate.setDate(startOfYear.getDate() + dayOffset);
+                    // 周末提交略少, 平日较多
+                    const dayOfWeek = currentDate.getDay();
+                    let maxCommits = (dayOfWeek === 0 || dayOfWeek === 6) ? 2 : 5;
+                    let commitsCount = Math.floor(Math.random() * maxCommits) + (Math.random() > 0.7 ? 1 : 0);
+                    if (commitsCount === 0 && Math.random() > 0.85) commitsCount = 1; // 保证大部分日子有1次左右
+                    for (let i = 0; i < commitsCount; i++) {
+                        const hour = 8 + Math.floor(Math.random() * 12);
+                        const minute = Math.floor(Math.random() * 60);
+                        const second = Math.floor(Math.random() * 60);
+                        const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')} +0800`;
+                        const authorObj = authors[Math.floor(Math.random() * authors.length)];
+                        const additions = Math.floor(Math.random() * 180) + 5;
+                        const deletions = Math.floor(Math.random() * 130) + 2;
+                        const fileCount = Math.floor(Math.random() * 3) + 1;
+                        const files = [];
+                        for (let f = 0; f < fileCount; f++) {
+                            files.push({ file: fileNames[Math.floor(Math.random() * fileNames.length)], additions: Math.floor(additions / fileCount), deletions: Math.floor(deletions / fileCount) });
+                        }
+                        commits.push({
+                            hash: randomHash(),
+                            date: dateStr,
+                            author: authorObj.name,
+                            email: authorObj.email,
+                            message: messages[Math.floor(Math.random() * messages.length)] + ` #${commits.length + 1}`,
+                            additions: additions,
+                            deletions: deletions,
+                            files: files
+                        });
+                    }
+                }
+            }
+            // 额外增强2026年最近一周活跃度
+            for (let i = 0; i < 25; i++) {
+                const extraDate = new Date(2026, 3, Math.floor(Math.random() * 8) + 2);
+                const dateStr = `${extraDate.getFullYear()}-${String(extraDate.getMonth() + 1).padStart(2, '0')}-${String(extraDate.getDate()).padStart(2, '0')} 14:${Math.floor(Math.random() * 60)}:${Math.floor(Math.random() * 60)} +0800`;
+                commits.push({
+                    hash: randomHash(), date: dateStr, author: "pj3691", email: "pj3691@github.com",
+                    message: "hotfix: 近期紧急更新", additions: 210, deletions: 98,
+                    files: [{ file: "src/core.js", additions: 210, deletions: 98 }]
+                });
+            }
+            // 按日期倒序 (最新在上)
+            commits.sort((a, b) => new Date(b.date) - new Date(a.date));
+            return commits;
+        }
+
+        let gitCommits = [];          // 全量提交
+        let dailyAggregated = [];     // 每日聚合 (全量)
+        let trendChartInstance = null;
+        let repos = [];
+        let selectedRepoId = null;
+        let repoEditorMode = null;
+        let currentRepoData = { branches: [], commitsByBranch: {} };
+        let selectedBranch = '';
+
+        // 分页状态
+        let currentPage = 1;
+        let pageSize = 15;
+        let dailyCurrentPage = 1;
+        let dailyPageSize = 15;
+        const trendLineValueLimit = 15000;
+
+        // 辅助函数
+        function getDateOnly(dateTimeStr) { return dateTimeStr.split(' ')[0]; }
+        function deriveRepoName(repoUrl) {
+            const clean = repoUrl.replace(/[\\/]+$/, '');
+            const parts = clean.split(/[\\/]/).filter(Boolean);
+            return parts.length ? parts[parts.length - 1] : 'repo';
+        }
+        function getSelectedRepo() {
+            return repos.find(r => r.id === selectedRepoId) || null;
+        }
+        function renderDefaultBranchSelect(preferredBranch) {
+            const select = document.getElementById('repoDefaultBranchSelect');
+            const candidates = Array.isArray(currentRepoData?.branches)
+                ? [...currentRepoData.branches]
+                : [];
+            const target = (preferredBranch || 'HEAD').trim() || 'HEAD';
+            select.innerHTML = '';
+            if (!candidates.length) {
+                select.innerHTML = '<option value="HEAD">HEAD</option>';
+                select.value = 'HEAD';
+                return;
+            }
+            for (const branch of candidates) {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                select.appendChild(option);
+            }
+            select.value = candidates.includes(target) ? target : candidates[0];
+        }
+        function renderBranchFilterSelect(branches, preferredBranch) {
+            const branchSelect = document.getElementById('repoBranchFilterSelect');
+            branchSelect.innerHTML = '';
+            const branchList = Array.isArray(branches) ? branches : [];
+            if (!branchList.length) {
+                branchSelect.innerHTML = '<option value="">无分支</option>';
+                selectedBranch = '';
+                return;
+            }
+            for (const branch of branchList) {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                branchSelect.appendChild(option);
+            }
+            selectedBranch =
+                (preferredBranch && branchList.includes(preferredBranch))
+                    ? preferredBranch
+                    : branchList[0];
+            branchSelect.value = selectedBranch;
+        }
+        function applyBranchDataAndRender() {
+            const branch = selectedBranch || '';
+            const dataMap = currentRepoData?.commitsByBranch || {};
+            const branchData = Array.isArray(dataMap[branch]) ? dataMap[branch] : [];
+            gitCommits = branchData;
+            currentPage = 1;
+            dailyCurrentPage = 1;
+            dailyAggregated = aggregateDailyData(gitCommits);
+            updateTotalStats();
+            renderCommitTable();
+            renderPagination();
+            renderDailyStatsTable();
+            renderDailyPagination();
+            renderTrendChart();
+            populateYearSelect();
+            updateRepoDisplay();
+        }
+        function getTrendFilteredDailyData() {
+            return [...dailyAggregated]
+                .filter(d => d.totalAdd <= trendLineValueLimit && d.totalDel <= trendLineValueLimit)
+                .sort((a, b) => new Date(a.date) - new Date(b.date));
+        }
+        function renderRepoSelect(selectedId) {
+            const select = document.getElementById('repoSelect');
+            select.innerHTML = '';
+            if (!repos.length) {
+                select.innerHTML = '<option value="">请选择仓库</option>';
+                selectedRepoId = null;
+                updateRepoDisplay();
+                return;
+            }
+            for (const repo of repos) {
+                const option = document.createElement('option');
+                option.value = String(repo.id);
+                option.textContent = repo.name;
+                select.appendChild(option);
+            }
+            if (selectedId && repos.some(r => r.id === selectedId)) {
+                selectedRepoId = selectedId;
+            } else {
+                selectedRepoId = repos[0].id;
+            }
+            select.value = String(selectedRepoId);
+            updateRepoDisplay();
+        }
+        function updateRepoDisplay() {
+            const urlDisplay = document.getElementById('repoDisplayUrl');
+            const selectedRepo = getSelectedRepo();
+            if (!selectedRepo) {
+                urlDisplay.textContent = '-';
+                return;
+            }
+            const branchText = selectedBranch ? ` [${selectedBranch}]` : '';
+            urlDisplay.textContent = `${selectedRepo.url || '-'}${branchText}`;
+        }
+        function openRepoEditor(mode) {
+            const panel = document.getElementById('repoEditorPanel');
+            const title = document.getElementById('repoEditorTitle');
+            const confirmBtn = document.getElementById('confirmRepoBtn');
+            const repoNameInput = document.getElementById('repoNameInput');
+            const repoInput = document.getElementById('repoInput');
+            const selectedRepo = getSelectedRepo();
+            repoEditorMode = mode;
+            panel.classList.add('active');
+            if (mode === 'add') {
+                title.textContent = '新增仓库';
+                confirmBtn.textContent = '确定新增';
+                repoNameInput.value = '';
+                repoInput.value = '';
+                renderDefaultBranchSelect('HEAD');
+                return;
+            }
+            title.textContent = '修改仓库';
+            confirmBtn.textContent = '确定修改';
+            if (!selectedRepo) {
+                repoNameInput.value = '';
+                repoInput.value = '';
+                renderDefaultBranchSelect('HEAD');
+                return;
+            }
+            repoNameInput.value = selectedRepo.name || '';
+            repoInput.value = selectedRepo.url || '';
+            renderDefaultBranchSelect(
+                selectedRepo.defaultBranch || selectedRepo.branch || selectedBranch || 'HEAD'
+            );
+        }
+        function closeRepoEditor() {
+            repoEditorMode = null;
+            const panel = document.getElementById('repoEditorPanel');
+            panel.classList.remove('active');
+        }
+        async function fetchRepos() {
+            const res = await apiFetch('/gitstatus/api/repos');
+            if (!res.ok) throw new Error(`查询仓库失败: ${res.status}`);
+            const json = await res.json();
+            repos = Array.isArray(json.repos) ? json.repos : [];
+            return repos;
+        }
+        async function createRepo(name, url, defaultBranch) {
+            const payload = { name: name || deriveRepoName(url), url, defaultBranch };
+            const res = await apiFetch('/gitstatus/api/repos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const json = await res.json();
+            if (!res.ok || !json.res) throw new Error(json.message || `添加失败: ${res.status}`);
+            return json.repo;
+        }
+        async function updateRepo(repoId, name, url, defaultBranch) {
+            if (!repoId) throw new Error('请先在下拉框选择仓库');
+            const payload = { name, url, defaultBranch };
+            const res = await apiFetch(`/gitstatus/api/repos/${repoId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const json = await res.json();
+            if (!res.ok || !json.res) throw new Error(json.message || `修改失败: ${res.status}`);
+            return json.repo;
+        }
+        async function refreshByRepo(repoId) {
+            if (!repoId) throw new Error('请先在下拉框选择仓库');
+            const res = await apiFetch(`/gitstatus/api/repos/${repoId}/refresh`, {
+                method: 'POST'
+            });
+            const json = await res.json();
+            if (!res.ok || !json.res) throw new Error(json.message || `刷新失败: ${res.status}`);
+            return json.repo;
+        }
+        async function loadDashboardData(repoId) {
+            if (!repoId) {
+                currentRepoData = { branches: [], commitsByBranch: {} };
+                renderBranchFilterSelect([], '');
+                gitCommits = [];
+                dailyAggregated = [];
+                updateTotalStats();
+                renderCommitTable();
+                renderPagination();
+                renderDailyStatsTable();
+                renderDailyPagination();
+                renderTrendChart();
+                populateYearSelect();
+                return;
+            }
+            const res = await apiFetch(`/gitstatus/api/repos?id=${repoId}`);
+            const json = await res.json();
+            if (!res.ok || !json.res) throw new Error(json.message || `读取仓库数据失败: ${res.status}`);
+            const repoData = json.repo?.data || {};
+            const branches = Array.isArray(repoData.branches) ? repoData.branches : [];
+            const commitsByBranch =
+                repoData.commitsByBranch && typeof repoData.commitsByBranch === 'object'
+                    ? repoData.commitsByBranch
+                    : {};
+            currentRepoData = { branches, commitsByBranch };
+            renderBranchFilterSelect(
+                branches,
+                json.repo?.defaultBranch || json.repo?.branch || ''
+            );
+            applyBranchDataAndRender();
+        }
+
+        // 聚合每日统计数据 (全量)
+        function aggregateDailyData(commitsArray) {
+            const dailyMap = new Map();
+            for (const commit of commitsArray) {
+                const day = getDateOnly(commit.date);
+                if (!dailyMap.has(day)) dailyMap.set(day, { commitsCount: 0, totalAdd: 0, totalDel: 0 });
+                const rec = dailyMap.get(day);
+                rec.commitsCount += 1;
+                rec.totalAdd += commit.additions;
+                rec.totalDel += commit.deletions;
+            }
+            const result = Array.from(dailyMap.entries()).map(([date, stats]) => ({
+                date, commitsCount: stats.commitsCount, totalAdd: stats.totalAdd, totalDel: stats.totalDel,
+                net: stats.totalAdd - stats.totalDel
+            }));
+            result.sort((a, b) => new Date(a.date) - new Date(b.date));
+            return result;
+        }
+
+        // 渲染提交表格
+        function renderCommitTable() {
+            const tbody = document.getElementById('commitTableBody');
+            if (!tbody) return;
+            const startIdx = (currentPage - 1) * pageSize;
+            const pageData = gitCommits.slice(startIdx, startIdx + pageSize);
+            if (pageData.length === 0) { tbody.innerHTML = '<tr><td colspan="8">暂无记录</td></tr>'; return; }
+            let html = '';
+            for (const c of pageData) {
+                const net = c.additions - c.deletions;
+                html += `<tr>
+                <td><span class="hash-short" title="${c.hash}">${c.hash.substring(0, 7)}</span></td>
+                <td>${c.date}</td><td>${escapeHtml(c.author)}</td>
+                <td><span class="additions">+${c.additions}</span></td>
+                <td><span class="deletions">-${c.deletions}</span></td>
+                <td class="${net >= 0 ? 'net-positive' : 'net-negative'}">${net >= 0 ? '+' : ''}${net}</td>
+                <td>${c.files?.length || 0}</td>
+                <td title="${escapeHtml(c.message)}">${escapeHtml(c.message?.slice(0, 45) || '')}</td>
+            </tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+        function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, function (m) { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; return m; }); }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(gitCommits.length / pageSize);
+            const container = document.getElementById('paginationControls');
+            if (!container) return;
+            if (totalPages <= 1) { container.innerHTML = '<span class="badge-light">共1页</span>'; return; }
+            let html = `<button class="page-btn ${currentPage === 1 ? 'disabled' : ''}" data-page="prev" ${currentPage === 1 ? 'disabled' : ''}>◀ 上一页</button>`;
+            let start = Math.max(1, currentPage - 2), end = Math.min(totalPages, currentPage + 2);
+            if (start > 1) html += `<button class="page-btn" data-page="1">1</button>${start > 2 ? '<span class="badge-light">...</span>' : ''}`;
+            for (let i = start; i <= end; i++) html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+            if (end < totalPages) html += `${end < totalPages - 1 ? '<span class="badge-light">...</span>' : ''}<button class="page-btn" data-page="${totalPages}">${totalPages}</button>`;
+            html += `<button class="page-btn ${currentPage === totalPages ? 'disabled' : ''}" data-page="next" ${currentPage === totalPages ? 'disabled' : ''}>下一页 ▶</button>`;
+            container.innerHTML = html;
+            document.querySelectorAll('#paginationControls .page-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.classList.contains('disabled')) return;
+                    let newPage = currentPage;
+                    const val = btn.getAttribute('data-page');
+                    if (val === 'prev') newPage--;
+                    else if (val === 'next') newPage++;
+                    else newPage = parseInt(val, 10);
+                    if (newPage >= 1 && newPage <= totalPages && newPage !== currentPage) {
+                        currentPage = newPage;
+                        renderCommitTable();
+                        renderPagination();
+                    }
+                });
+            });
+        }
+
+        function renderDailyStatsTable() {
+            const tbody = document.getElementById('dailyStatsBody');
+            if (!dailyAggregated.length) { tbody.innerHTML = '<tr><td colspan="6">无数据</td></tr>'; return; }
+            const sortedDesc = [...dailyAggregated].sort((a, b) => new Date(b.date) - new Date(a.date));
+            const totalPages = Math.max(1, Math.ceil(sortedDesc.length / dailyPageSize));
+            if (dailyCurrentPage > totalPages) dailyCurrentPage = totalPages;
+            const startIdx = (dailyCurrentPage - 1) * dailyPageSize;
+            const pageData = sortedDesc.slice(startIdx, startIdx + dailyPageSize);
+            let html = '';
+            for (const d of pageData) {
+                const activeScore = Math.floor(d.commitsCount * 2 + Math.abs(d.net) / 12);
+                html += `<tr><td>${d.date}</td><td><strong>${d.commitsCount}</strong> 次</td><td class="additions">+${d.totalAdd}</td><td class="deletions">-${d.totalDel}</td><td class="${d.net >= 0 ? 'net-positive' : 'net-negative'}">${d.net >= 0 ? '+' : ''}${d.net}</td><td><span class="badge-light">🔥 ${activeScore}</span></td></tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+
+        function renderDailyPagination() {
+            const totalPages = Math.ceil(dailyAggregated.length / dailyPageSize);
+            const container = document.getElementById('dailyPaginationControls');
+            if (!container) return;
+            if (totalPages <= 1) { container.innerHTML = '<span class="badge-light">共1页</span>'; return; }
+            let html = `<button class="page-btn ${dailyCurrentPage === 1 ? 'disabled' : ''}" data-page="prev" ${dailyCurrentPage === 1 ? 'disabled' : ''}>◀ 上一页</button>`;
+            let start = Math.max(1, dailyCurrentPage - 2), end = Math.min(totalPages, dailyCurrentPage + 2);
+            if (start > 1) html += `<button class="page-btn" data-page="1">1</button>${start > 2 ? '<span class="badge-light">...</span>' : ''}`;
+            for (let i = start; i <= end; i++) html += `<button class="page-btn ${i === dailyCurrentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+            if (end < totalPages) html += `${end < totalPages - 1 ? '<span class="badge-light">...</span>' : ''}<button class="page-btn" data-page="${totalPages}">${totalPages}</button>`;
+            html += `<button class="page-btn ${dailyCurrentPage === totalPages ? 'disabled' : ''}" data-page="next" ${dailyCurrentPage === totalPages ? 'disabled' : ''}>下一页 ▶</button>`;
+            container.innerHTML = html;
+            document.querySelectorAll('#dailyPaginationControls .page-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.classList.contains('disabled')) return;
+                    let newPage = dailyCurrentPage;
+                    const val = btn.getAttribute('data-page');
+                    if (val === 'prev') newPage--;
+                    else if (val === 'next') newPage++;
+                    else newPage = parseInt(val, 10);
+                    if (newPage >= 1 && newPage <= totalPages && newPage !== dailyCurrentPage) {
+                        dailyCurrentPage = newPage;
+                        renderDailyStatsTable();
+                        renderDailyPagination();
+                    }
+                });
+            });
+        }
+
+        function renderTrendChart() {
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            if (trendChartInstance) trendChartInstance.destroy();
+            const sortedAsc = getTrendFilteredDailyData();
+            const labels = sortedAsc.map(d => d.date);
+            const addData = sortedAsc.map(d => d.totalAdd);
+            const delData = sortedAsc.map(d => d.totalDel);
+            trendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels, datasets: [
+                        { label: '新增代码行数 (+)', data: addData, borderColor: '#1f7a4d', backgroundColor: 'rgba(31,122,77,0.06)', borderWidth: 2.5, fill: true, pointRadius: 2, tension: 0.2 },
+                        { label: '删除代码行数 (-)', data: delData, borderColor: '#c9372c', backgroundColor: 'rgba(201,55,44,0.04)', borderWidth: 2.5, fill: true, pointRadius: 2, tension: 0.2 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    color: '#3f5145',
+                    plugins: {
+                        tooltip: { mode: 'index' },
+                        legend: { position: 'top', labels: { color: '#3f5145', usePointStyle: true } },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x'
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                drag: {
+                                    enabled: true,
+                                    modifierKey: 'shift'
+                                },
+                                mode: 'x'
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: '代码行数', color: '#6c7d71' },
+                            grid: { color: '#eef3ef' },
+                            ticks: { color: '#6c7d71' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { maxRotation: 35, autoSkip: true, color: '#6c7d71' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateTotalStats() {
+            document.getElementById('totalCommitsCount').innerText = gitCommits.length;
+            const filteredDaily = getTrendFilteredDailyData();
+            document.getElementById('totalAdditionsCount').innerText = filteredDaily.reduce((s, d) => s + d.totalAdd, 0);
+            document.getElementById('totalDeletionsCount').innerText = filteredDaily.reduce((s, d) => s + d.totalDel, 0);
+        }
+
+        function setupCollapsibleCards() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, idx) => {
+                const header = card.querySelector('.card-header');
+                const body = card.querySelector('.card-body');
+                if (!header || !body) return;
+
+                const bodyId = body.id || `cardBody_${idx + 1}`;
+                body.id = bodyId;
+                header.setAttribute('aria-controls', bodyId);
+
+                if (header.dataset.collapseInit === '1') return;
+                header.dataset.collapseInit = '1';
+
+                header.addEventListener('click', (e) => {
+                    const target = e.target;
+                    if (target.closest('select, button, input, a, label')) return;
+                    const willCollapse = !card.classList.contains('collapsed');
+                    card.classList.toggle('collapsed', willCollapse);
+                    header.setAttribute('aria-expanded', willCollapse ? 'false' : 'true');
+
+                    if (!willCollapse) {
+                        if (trendChartInstance) trendChartInstance.resize();
+                        const yearSelect = document.getElementById('heatmapYearSelect');
+                        if (yearSelect?.value) renderHeatmap(parseInt(yearSelect.value, 10));
+                    }
+                });
+            });
+        }
+
+        // ---------- 热力图模块 (GitHub风格 7×N, 按年份 mock 数据接口) ----------
+        // 根据年份获取该年每日提交次数 (模拟异步接口)
+        async function fetchHeatmapDataByYear(year) {
+            // 模拟API延迟
+            await new Promise(r => setTimeout(r, 30));
+            // 从全量 commits 中过滤该年份，并聚合每日提交次数
+            const yearCommits = gitCommits.filter(c => {
+                const y = new Date(c.date).getFullYear();
+                return y === year;
+            });
+            const dailyCount = new Map();
+            for (const c of yearCommits) {
+                const day = getDateOnly(c.date);
+                dailyCount.set(day, (dailyCount.get(day) || 0) + 1);
+            }
+            // 返回该年每一天的提交次数映射 (日期字符串 -> count)
+            return dailyCount;
+        }
+
+        // 渲染热力图 (基于年份)
+        async function renderHeatmap(year) {
+            const container = document.getElementById('heatmapCells');
+            const monthLabelsDiv = document.getElementById('monthLabels');
+            if (!container) return;
+            const commitMap = await fetchHeatmapDataByYear(year);
+            // 生成该年所有日期 (从1月1日到12月31日)
+            const startDate = new Date(year, 0, 1);
+            const endDate = new Date(year, 11, 31);
+            const allDays = [];
+            let current = new Date(startDate);
+            while (current <= endDate) {
+                allDays.push(new Date(current));
+                current.setDate(current.getDate() + 1);
+            }
+            // 获取第一天是周几 (0周日 ~ 6周六)，在热力图里我们希望第一列是周日，标准GitHub风格: 周日-周六
+            const firstDayWeek = startDate.getDay(); // 0周日
+            // 构建填充数组: 每周7天，需要前置空白
+            const cells = [];
+            // 前置空白 (补齐第一周)
+            for (let i = 0; i < firstDayWeek; i++) cells.push({ date: null, count: 0 });
+            for (const d of allDays) {
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const count = commitMap.get(dateStr) || 0;
+                cells.push({ date: dateStr, count: count, fullDate: d });
+            }
+            // 计算需要多少行 (每个周是一列，所以列数 = ceil(cells.length/7) )
+            const totalWeeks = Math.ceil(cells.length / 7);
+
+            const gridWrapper = document.getElementById('heatmapGridContainer');
+            const weekdaysWidth = 36; // 28 + 8 padding-right
+            const colGap = 4;
+            const availableWidth = Math.max(0, (gridWrapper?.clientWidth || 0) - weekdaysWidth);
+            const dynamicCellSize = totalWeeks > 0
+                ? (availableWidth - colGap * (totalWeeks - 1)) / totalWeeks
+                : 12;
+            const cellSize = Math.max(8, dynamicCellSize);
+
+            // 使用CSS grid 展示：7行 x totalWeeks列，宽度随容器动态计算
+            container.style.display = 'grid';
+            container.style.gridTemplateRows = `repeat(7, ${cellSize}px)`;
+            container.style.gridAutoFlow = 'column';
+            container.style.gap = `${colGap}px`;
+            container.style.rowGap = `${colGap}px`;
+            container.style.columnGap = `${colGap}px`;
+            container.innerHTML = '';
+            // 填充所有格子
+            for (let i = 0; i < cells.length; i++) {
+                const cellData = cells[i];
+                const div = document.createElement('div');
+                div.className = 'heatmap-cell';
+                div.style.width = `${cellSize}px`;
+                div.style.height = `${cellSize}px`;
+                const count = cellData.count;
+                // 颜色分级 (基于提交次数)
+                let bg = '#ebedf0';
+                if (count >= 1 && count <= 2) bg = '#9be9a8';
+                else if (count >= 3 && count <= 5) bg = '#40c463';
+                else if (count >= 6 && count <= 9) bg = '#30a14e';
+                else if (count >= 10) bg = '#216e39';
+                div.style.backgroundColor = bg;
+                div.setAttribute('data-date', cellData.date || '');
+                div.setAttribute('data-count', count);
+                // tooltip
+                div.addEventListener('mouseenter', (e) => {
+                    const tip = document.createElement('div');
+                    tip.className = 'tooltip-heat';
+                    const dateText = cellData.date ? cellData.date : '(填充)';
+                    tip.innerText = cellData.date ? `${dateText} : ${count} 次提交` : '无数据';
+                    document.body.appendChild(tip);
+                    const rect = e.target.getBoundingClientRect();
+                    tip.style.left = rect.left + window.scrollX + 12 + 'px';
+                    tip.style.top = rect.top + window.scrollY - 28 + 'px';
+                    e.target._tooltip = tip;
+                });
+                div.addEventListener('mouseleave', (e) => {
+                    if (e.target._tooltip) { e.target._tooltip.remove(); e.target._tooltip = null; }
+                });
+                container.appendChild(div);
+            }
+            // 补齐剩余格子使网格完整 (如果cells数量不能被7整除, 缺的最后列不显示也可以，因为grid auto-flow不会留空)
+            // 生成月份标签 (按周列对齐，确保与热力图格子一一对应)
+            const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+            const weekMonthLabels = new Array(totalWeeks).fill('');
+            for (let m = 0; m < 12; m++) {
+                const firstOfMonth = new Date(year, m, 1);
+                const dayOfYear = Math.floor((firstOfMonth - new Date(year, 0, 1)) / (24 * 3600 * 1000));
+                const colIndex = Math.floor((dayOfYear + firstDayWeek) / 7);
+                if (colIndex >= 0 && colIndex < totalWeeks && !weekMonthLabels[colIndex]) {
+                    weekMonthLabels[colIndex] = months[m];
+                }
+            }
+
+            const totalWidth = Math.max(0, totalWeeks * cellSize + (totalWeeks - 1) * colGap);
+
+            monthLabelsDiv.style.gridTemplateColumns = `repeat(${totalWeeks}, ${cellSize}px)`;
+            monthLabelsDiv.style.columnGap = `${colGap}px`;
+            monthLabelsDiv.style.width = `${totalWidth}px`;
+            monthLabelsDiv.innerHTML = weekMonthLabels
+                .map((month) => `<div class="month-label">${month}</div>`)
+                .join('');
+            // 设置周几标签
+            const weekdaysDiv = document.getElementById('weekdayLabels');
+            weekdaysDiv.style.gridTemplateRows = `repeat(7, ${cellSize}px)`;
+            weekdaysDiv.style.rowGap = `${colGap}px`;
+            weekdaysDiv.innerHTML = `<div class="weekday">日</div><div class="weekday">一</div><div class="weekday">二</div><div class="weekday">三</div><div class="weekday">四</div><div class="weekday">五</div><div class="weekday">六</div>`;
+        }
+
+        // 动态生成年份下拉框 (基于数据中存在年份)
+        function populateYearSelect() {
+            const yearsSet = new Set();
+            for (const c of gitCommits) {
+                yearsSet.add(new Date(c.date).getFullYear());
+            }
+            const sortedYears = Array.from(yearsSet).sort((a, b) => b - a);
+            const select = document.getElementById('heatmapYearSelect');
+            select.innerHTML = '';
+            if (!sortedYears.length) {
+                select.innerHTML = '<option value="">暂无年份</option>';
+                document.getElementById('heatmapCells').innerHTML = '';
+                document.getElementById('monthLabels').innerHTML = '';
+                document.getElementById('weekdayLabels').innerHTML = '';
+                return;
+            }
+            for (const y of sortedYears) {
+                const option = document.createElement('option');
+                option.value = y;
+                option.textContent = `${y} 年`;
+                select.appendChild(option);
+            }
+            if (sortedYears.length) renderHeatmap(sortedYears[0]);
+            select.onchange = (e) => renderHeatmap(parseInt(e.target.value));
+        }
+
+        // 初始化所有
+        async function init() {
+            setupCollapsibleCards();
+            await fetchRepos();
+            renderRepoSelect();
+            await loadDashboardData(selectedRepoId);
+
+            const repoSelect = document.getElementById('repoSelect');
+            const repoBranchFilterSelect = document.getElementById('repoBranchFilterSelect');
+            const addRepoBtn = document.getElementById('addRepoBtn');
+            const updateRepoBtn = document.getElementById('updateRepoBtn');
+            const refreshRepoBtn = document.getElementById('refreshRepoBtn');
+            const confirmRepoBtn = document.getElementById('confirmRepoBtn');
+            const cancelRepoBtn = document.getElementById('cancelRepoBtn');
+            const repoNameInput = document.getElementById('repoNameInput');
+            const repoInput = document.getElementById('repoInput');
+            const repoDefaultBranchSelect = document.getElementById('repoDefaultBranchSelect');
+
+            repoSelect.addEventListener('change', async (e) => {
+                try {
+                    selectedRepoId = Number(e.target.value) || null;
+                    updateRepoDisplay();
+                    closeRepoEditor();
+                    await loadDashboardData(selectedRepoId);
+                } catch (err) {
+                    alert(err?.message || '切换仓库失败');
+                }
+            });
+            repoBranchFilterSelect.addEventListener('change', (e) => {
+                selectedBranch = e.target.value || '';
+                applyBranchDataAndRender();
+            });
+            addRepoBtn.addEventListener('click', () => {
+                openRepoEditor('add');
+            });
+            updateRepoBtn.addEventListener('click', () => {
+                if (!selectedRepoId) { alert('请先在下拉框选择仓库'); return; }
+                openRepoEditor('edit');
+            });
+            confirmRepoBtn.addEventListener('click', async () => {
+                const actionMode = repoEditorMode;
+                try {
+                    const repoName = (repoNameInput.value || '').trim();
+                    const repoPath = (repoInput.value || '').trim();
+                    const defaultBranch = (repoDefaultBranchSelect.value || '').trim();
+                    if (!repoName) { alert('请输入仓库名称'); return; }
+                    if (!repoPath) { alert('请输入仓库地址'); return; }
+
+                    confirmRepoBtn.disabled = true;
+                    cancelRepoBtn.disabled = true;
+                    confirmRepoBtn.textContent = actionMode === 'add' ? '新增中...' : '修改中...';
+
+                    if (actionMode === 'add') {
+                        const created = await createRepo(repoName, repoPath, defaultBranch);
+                        await fetchRepos();
+                        renderRepoSelect(created.id);
+                        await loadDashboardData(created.id);
+                    } else if (actionMode === 'edit') {
+                        if (!selectedRepoId) { alert('请先在下拉框选择仓库'); return; }
+                        await updateRepo(selectedRepoId, repoName, repoPath, defaultBranch);
+                        await fetchRepos();
+                        renderRepoSelect(selectedRepoId);
+                        await loadDashboardData(selectedRepoId);
+                    }
+
+                    closeRepoEditor();
+                    updateRepoDisplay();
+                } catch (err) {
+                    alert(err?.message || (actionMode === 'add' ? '添加仓库失败' : '修改仓库失败'));
+                } finally {
+                    confirmRepoBtn.disabled = false;
+                    cancelRepoBtn.disabled = false;
+                    confirmRepoBtn.textContent = actionMode === 'add' ? '确定新增' : '确定修改';
+                }
+            });
+            cancelRepoBtn.addEventListener('click', () => {
+                closeRepoEditor();
+                const selectedRepo = getSelectedRepo();
+                if (selectedRepo) {
+                    repoNameInput.value = selectedRepo.name || '';
+                    repoInput.value = selectedRepo.url || '';
+                    renderDefaultBranchSelect(
+                        selectedRepo.defaultBranch || selectedRepo.branch || selectedBranch || 'HEAD'
+                    );
+                } else {
+                    repoNameInput.value = '';
+                    repoInput.value = '';
+                    renderDefaultBranchSelect('HEAD');
+                }
+            });
+            refreshRepoBtn.addEventListener('click', async () => {
+                try {
+                    refreshRepoBtn.disabled = true;
+                    refreshRepoBtn.textContent = '刷新中...';
+                    await refreshByRepo(selectedRepoId);
+                    await fetchRepos();
+                    renderRepoSelect(selectedRepoId);
+                    await loadDashboardData(selectedRepoId);
+                } catch (err) {
+                    alert(err?.message || '刷新失败');
+                } finally {
+                    refreshRepoBtn.disabled = false;
+                    refreshRepoBtn.textContent = '刷新';
+                }
+            });
+
+            // 监听每页大小变更
+            const pageSelect = document.getElementById('pageSizeSelect');
+            pageSelect.addEventListener('change', (e) => {
+                pageSize = parseInt(e.target.value);
+                currentPage = 1;
+                renderCommitTable();
+                renderPagination();
+            });
+            const dailyPageSelect = document.getElementById('dailyPageSizeSelect');
+            dailyPageSelect.addEventListener('change', (e) => {
+                dailyPageSize = parseInt(e.target.value);
+                dailyCurrentPage = 1;
+                renderDailyStatsTable();
+                renderDailyPagination();
+            });
+            window.addEventListener('resize', () => { if (trendChartInstance) trendChartInstance.resize(); });
+        }
+
+        // 页面启动：先恢复登录态，验证通过后再加载仓库数据
+        (async function bootstrap() {
+            setupAuthUi();
+            authToken = readStorage(AUTH_TOKEN_KEY) || '';
+            authUser = safeJsonParse(readStorage(AUTH_USER_KEY));
+            renderAuthBar();
+
+            if (!authToken) {
+                showLogin('');
+                applyRolePermissions();
+                return;
+            }
+            const ok = await loadCurrentUser();
+            if (!ok) {
+                clearAuth();
+                showLogin('登录已过期，请重新登录');
+                return;
+            }
+            hideLogin();
+            renderAuthBar();
+            applyRolePermissions();
+            try {
+                await init();
+            } catch (err) {
+                console.error(err);
+                alert(err?.message || '加载仓库数据失败');
+            }
+        })();
+    </script>
+</body>
+
+</html>
