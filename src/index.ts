@@ -7,7 +7,12 @@ import Database from "better-sqlite3";
 import jwt from "jsonwebtoken";
 import type { StringValue } from "ms";
 import bcrypt from "bcryptjs";
-import { registerTodoFeature, removeTodoImagesForUser, transferTodoData } from "./todo.js";
+import {
+  registerTodoFeature,
+  removeTodoAttachmentsForUser,
+  removePetAssetsForUser,
+  transferTodoData,
+} from "./todo.js";
 
 type GitCommit = {
   hash: string;
@@ -125,7 +130,7 @@ type DeleteBlogResponse = { res: true; message: string };
 /** 角色等级：只读 < 读写 < 管理员 */
 type UserRole = "readonly" | "readwrite" | "admin";
 
-type UserStatus = "active" | "disabled";
+type UserStatus = "active" | "disabled" | "pending";
 
 const ROLE_LEVEL: Record<UserRole, number> = {
   readonly: 1,
@@ -134,13 +139,19 @@ const ROLE_LEVEL: Record<UserRole, number> = {
 };
 
 const USER_ROLES: UserRole[] = ["readonly", "readwrite", "admin"];
+/** 管理员在用户管理页可设置的状态（pending 只由注册产生） */
 const USER_STATUSES: UserStatus[] = ["active", "disabled"];
+/** 用户列表筛选允许待审核状态 */
+const USER_STATUS_FILTERS: UserStatus[] = ["active", "disabled", "pending"];
 
 const isUserRole = (value: unknown): value is UserRole =>
   typeof value === "string" && (USER_ROLES as string[]).includes(value);
 
 const isUserStatus = (value: unknown): value is UserStatus =>
   typeof value === "string" && (USER_STATUSES as string[]).includes(value);
+
+const isUserStatusFilter = (value: unknown): value is UserStatus =>
+  typeof value === "string" && (USER_STATUS_FILTERS as string[]).includes(value);
 
 type UserRow = {
   id: number;
@@ -172,6 +183,8 @@ type RuntimeConfig = {
   allowedOrigins: string[];
   jwtSecret: string;
   jwtExpiresIn: StringValue;
+  /** 同时处于待审核状态的最大注册数量，超过后暂停注册 */
+  maxPendingRegistrations: number;
 };
 
 const app = express();
@@ -248,16 +261,30 @@ const loadRuntimeConfig = (): RuntimeConfig => {
     const origins = Array.isArray(parsed.allowedOrigins)
       ? parsed.allowedOrigins.map((x) => String(x).trim()).filter(Boolean)
       : [];
+    const envMaxPending = Number(process.env.MAX_PENDING_REGISTRATIONS);
+    const configMaxPending = Number(parsed.maxPendingRegistrations);
+    const maxPendingRegistrations =
+      Number.isInteger(envMaxPending) && envMaxPending > 0
+        ? Math.min(envMaxPending, 500)
+        : Number.isInteger(configMaxPending) && configMaxPending > 0
+          ? Math.min(configMaxPending, 500)
+          : 20;
     return {
       allowedOrigins: origins,
       jwtSecret: String(parsed.jwtSecret || "gitstatus-default-secret").trim(),
       jwtExpiresIn: String(parsed.jwtExpiresIn || "7d").trim() as StringValue,
+      maxPendingRegistrations,
     };
   } catch (error) {
     logWarn(
       `[config] failed to read ${configPath}, fallback to defaults`,
     );
-    return { allowedOrigins: [], jwtSecret: "gitstatus-default-secret", jwtExpiresIn: "7d" as StringValue };
+    return {
+      allowedOrigins: [],
+      jwtSecret: "gitstatus-default-secret",
+      jwtExpiresIn: "7d" as StringValue,
+      maxPendingRegistrations: 20,
+    };
   }
 };
 
@@ -322,7 +349,17 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use("/pages", express.static(pagesDir));
+app.use(
+  "/pages",
+  express.static(pagesDir, {
+    setHeaders: (res, filePath) => {
+      // HTML 页面只做协商缓存，避免前端逻辑更新后浏览器继续使用旧页面
+      if (filePath.endsWith(".html")) {
+        res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      }
+    },
+  }),
+);
 app.use(`${apiPrefix}/docs`, express.static(docsDir));
 // 静态托管已生成的模型文件
 app.use(`${apiPrefix}/models`, express.static(modelsDir));
@@ -469,6 +506,9 @@ const touchLastLoginStmt = db.prepare(
 const getUserCountStmt = db.prepare(
   "SELECT COUNT(*) as count FROM users",
 );
+const getPendingUserCountStmt = db.prepare(
+  "SELECT COUNT(*) as count FROM users WHERE status = 'pending'",
+);
 const getActiveAdminCountStmt = db.prepare(
   "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND status = 'active'",
 );
@@ -482,6 +522,16 @@ const toUserDto = (row: UserRow): UserDto => ({
   createdAt: row.created_at,
   lastLoginAt: row.last_login_at ?? null,
 });
+
+/** 判断请求是否来自本机（用于仅本机可用的系统级操作） */
+const isLoopbackClient = (req: express.Request): boolean => {
+  const address = String(req.socket.remoteAddress || "");
+  return (
+    address === "::1" ||
+    address === "127.0.0.1" ||
+    address.startsWith("::ffff:127.")
+  );
+};
 
 /** 角色是否达到指定等级 */
 const hasRoleLevel = (role: UserRole | undefined, min: UserRole): boolean =>
@@ -534,6 +584,13 @@ const authMiddleware = (
   const dbUser = getUserByIdStmt.get(userId) as UserRow | undefined;
   if (!dbUser) {
     res.status(401).json({ res: false, message: "user no longer exists" });
+    return;
+  }
+  if (dbUser.status === "pending") {
+    res.status(403).json({
+      res: false,
+      message: "account pending approval; please wait for an administrator to review it",
+    });
     return;
   }
   if (dbUser.status !== "active") {
@@ -614,13 +671,52 @@ app.post(`${apiPrefix}/auth/register`, async (req, res) => {
       return;
     }
 
-    // 第一个用户自动成为管理员，其余新用户默认只读，由管理员按需提升
+    // 第一个用户自动成为管理员；其余注册需要管理员审核
     const { count } = getUserCountStmt.get() as { count: number };
-    const role: UserRole = count === 0 ? "admin" : "readonly";
+    const isFirstUser = count === 0;
+    const role: UserRole = isFirstUser ? "admin" : "readonly";
+
+    // 限制同时待审核的注册数量，避免恶意注册堆积
+    if (!isFirstUser) {
+      const pending = (getPendingUserCountStmt.get() as { count: number }).count;
+      if (pending >= runtimeConfig.maxPendingRegistrations) {
+        res.status(429).json({
+          res: false,
+          message: "too many pending registrations; please try again later",
+        });
+        return;
+      }
+    }
 
     const hash = await bcrypt.hash(password, 10);
-    const info = insertUserStmt.run(username, hash, role, "active");
+
+    // bcrypt 是异步操作，哈希完成后再次检查，防止并发请求突破上限
+    if (!isFirstUser) {
+      const pending = (getPendingUserCountStmt.get() as { count: number }).count;
+      if (pending >= runtimeConfig.maxPendingRegistrations) {
+        res.status(429).json({
+          res: false,
+          message: "too many pending registrations; please try again later",
+        });
+        return;
+      }
+    }
+
+    const initialStatus: UserStatus = isFirstUser ? "active" : "pending";
+    const info = insertUserStmt.run(username, hash, role, initialStatus);
     const user = getUserByIdStmt.get(Number(info.lastInsertRowid)) as UserRow;
+
+    // 待审核用户不签发 token，必须由管理员审核通过后才能登录
+    if (!isFirstUser) {
+      logInfo(`[auth] registered user ${user.username} pending approval`);
+      res.status(201).json({
+        res: true,
+        user: toUserDto(user),
+        pending: true,
+        message: "registration pending approval",
+      });
+      return;
+    }
 
     const payload: JwtPayload = { userId: user.id, username: user.username, role: user.role };
     const token = jwt.sign(payload, runtimeConfig.jwtSecret, {
@@ -632,6 +728,7 @@ app.post(`${apiPrefix}/auth/register`, async (req, res) => {
       res: true,
       user: toUserDto(user),
       token,
+      local: isLoopbackClient(req),
     });
   } catch (error: any) {
     res.status(500).json({ res: false, message: error?.message || "register failed" });
@@ -659,6 +756,13 @@ app.post(`${apiPrefix}/auth/login`, async (req, res) => {
       res.status(401).json({ res: false, message: "invalid username or password" });
       return;
     }
+    if (user.status === "pending") {
+      res.status(403).json({
+        res: false,
+        message: "account pending approval; please wait for an administrator to review it",
+      });
+      return;
+    }
     if (user.status !== "active") {
       res.status(403).json({ res: false, message: "account is disabled" });
       return;
@@ -676,6 +780,7 @@ app.post(`${apiPrefix}/auth/login`, async (req, res) => {
       res: true,
       user: toUserDto(fresh),
       token,
+      local: isLoopbackClient(req),
     });
   } catch (error: any) {
     res.status(500).json({ res: false, message: error?.message || "login failed" });
@@ -689,7 +794,8 @@ app.get(`${apiPrefix}/auth/me`, authMiddleware, (req, res) => {
     res.status(404).json({ res: false, message: "user not found" });
     return;
   }
-  res.json({ res: true, user: toUserDto(row) });
+  // local 表示浏览器与服务在同一台机器上，前端据此决定是否提供“系统默认程序打开”
+  res.json({ res: true, user: toUserDto(row), local: isLoopbackClient(req) });
 });
 
 // ========== 用户管理 API（仅管理员） ==========
@@ -720,7 +826,7 @@ app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) =
     res.status(400).json({ res: false, message: "invalid role filter" });
     return;
   }
-  if (statusFilter && !isUserStatus(statusFilter)) {
+  if (statusFilter && !isUserStatusFilter(statusFilter)) {
     res.status(400).json({ res: false, message: "invalid status filter" });
     return;
   }
@@ -734,6 +840,11 @@ app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) =
   const sortField = sortableFields.includes(sortRaw) ? sortRaw : "id";
   const sortOrder =
     String(req.query.order ?? "").toLowerCase() === "desc" ? "DESC" : "ASC";
+  // 默认把待审核账号排在最前，方便管理员及时处理
+  const explicitSort = Boolean(String(req.query.sort ?? "").trim());
+  const orderClause = explicitSort
+    ? `${sortField} ${sortOrder}`
+    : `CASE status WHEN 'pending' THEN 0 ELSE 1 END, ${sortField} ${sortOrder}`;
 
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -758,7 +869,7 @@ app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) =
   ).total;
   const rows = db
     .prepare(
-      `SELECT * FROM users ${whereClause} ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`,
+      `SELECT * FROM users ${whereClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`,
     )
     .all(...params, pageSize, offset) as UserRow[];
 
@@ -767,6 +878,7 @@ app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) =
     total,
     page,
     pageSize,
+    pendingCount: (getPendingUserCountStmt.get() as { count: number }).count,
     users: rows.map(toUserDto),
   });
 });
@@ -988,7 +1100,7 @@ app.post(`${apiPrefix}/users/:id/transfer`, authMiddleware, requireRole("admin")
     const stats = transferTodoData(db, sourceId, targetId);
     logInfo(
       `[users] ${req.user!.username} transferred todo data from ${source.username} to ${target.username}: ` +
-        `${stats.categories} categories, ${stats.tags} tags, ${stats.todos} todos, ${stats.images} images`,
+        `${stats.categories} categories, ${stats.tags} tags, ${stats.todos} todos, ${stats.attachments} attachments`,
     );
     res.json({ res: true, message: "transferred", stats });
   } catch (error: any) {
@@ -1025,7 +1137,8 @@ app.delete(`${apiPrefix}/users/:id`, authMiddleware, requireRole("admin"), (req,
       deleteUserStmt.run(id);
     });
     removeUser();
-    removeTodoImagesForUser(id);
+    removeTodoAttachmentsForUser(id);
+    removePetAssetsForUser(id);
     logInfo(`[users] ${req.user!.username} deleted user ${row.username} (id=${id})`);
     res.json({ res: true, message: "deleted" });
   } catch (error: any) {
