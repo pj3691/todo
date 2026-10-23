@@ -9,6 +9,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231f7a4d'/%3E%3Cpath d='M9 16.5l4.2 4.2L23.5 10' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/pages/assets/styles/theme.css">
     <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
     <style>
         * {
             box-sizing: border-box;
@@ -1773,6 +1774,218 @@
             margin-top: 11px;
         }
 
+        .attachment-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 11px;
+        }
+
+        .attachment-actions .upload-button {
+            margin-top: 0;
+        }
+
+        /* 附件拖拽投放区 */
+        .attachment-dropzone {
+            position: relative;
+            padding: 8px;
+            margin: -2px;
+            border: 1px dashed transparent;
+            border-radius: 11px;
+            transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        .attachment-dropzone.is-dragover {
+            border-color: var(--green);
+            background: var(--green-soft);
+            box-shadow: inset 0 0 0 1px rgba(31, 122, 77, 0.12);
+        }
+
+        .attachment-drop-hint {
+            display: block;
+            margin-top: 9px;
+            color: var(--muted);
+            font-size: 0.68rem;
+            text-align: center;
+        }
+
+        .attachment-dropzone.is-dragover .attachment-drop-hint {
+            color: var(--green-strong);
+            font-weight: 700;
+        }
+
+        /* 非图片附件：只展示名称与大小，不做预览 */
+        .file-attachment-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .file-attachment-list:empty {
+            display: none;
+        }
+
+        .file-attachment-item {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 7px 10px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: var(--surface-soft);
+        }
+
+        .file-attachment-icon {
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            color: var(--muted);
+        }
+
+        .file-attachment-main {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .file-attachment-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.78rem;
+            font-weight: 650;
+            color: var(--text);
+        }
+
+        .file-attachment-meta {
+            color: var(--muted);
+            font-size: 0.67rem;
+        }
+
+        .file-attachment-remove {
+            flex: 0 0 auto;
+            width: 24px;
+            height: 24px;
+            margin-left: auto;
+            padding: 0;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            color: var(--muted);
+            background: var(--surface);
+            cursor: pointer;
+            transition: 0.16s ease;
+        }
+
+        .file-attachment-remove:hover {
+            color: var(--red);
+            border-color: #f0c9c5;
+            background: var(--red-soft);
+        }
+
+        .detail-files {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .detail-files:empty {
+            display: none;
+        }
+
+        .detail-file-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: var(--surface-soft);
+            transition: 0.16s ease;
+        }
+
+        .detail-file-item:hover {
+            border-color: #bdd7c6;
+            background: var(--green-soft);
+        }
+
+        .detail-file-open {
+            flex: 1 1 auto;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 4px 3px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-soft);
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .detail-file-open .file-attachment-name {
+            flex: 1 1 auto;
+        }
+
+        .detail-file-open .file-attachment-meta {
+            flex: 0 0 auto;
+        }
+
+        .detail-file-download {
+            flex: 0 0 auto;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--muted);
+            background: var(--surface);
+            cursor: pointer;
+            transition: 0.16s ease;
+        }
+
+        .detail-file-download:hover {
+            color: var(--green-strong);
+            border-color: #bdd7c6;
+            background: #fff;
+        }
+
+        .card-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        .card-file-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 100%;
+            padding: 2px 8px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: var(--surface-soft);
+            color: var(--muted);
+            font-size: 0.67rem;
+            font-weight: 600;
+        }
+
+        .card-file-chip span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .form-error {
             margin-bottom: 15px;
             padding: 9px 12px;
@@ -2394,6 +2607,7 @@
             align-items: center;
             justify-content: center;
             padding: 28px;
+            overflow: hidden;
             background: rgba(5, 15, 9, 0.82);
             -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
@@ -2404,14 +2618,99 @@
             animation: layer-in 0.16s ease both;
         }
 
+        /* 图片缩放舞台：图片可平移，背景点击仍可关闭 */
+        .lightbox-stage {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            pointer-events: none;
+            touch-action: none;
+        }
+
         .lightbox img {
-            max-width: min(1200px, 100%);
-            max-height: calc(100vh - 96px);
+            max-width: min(1200px, calc(100vw - 56px));
+            max-height: calc(100vh - 132px);
             display: block;
             object-fit: contain;
             border-radius: 13px;
             background: #101a13;
             box-shadow: 0 30px 90px rgba(0, 0, 0, 0.4);
+            pointer-events: auto;
+            touch-action: none;
+            transform-origin: center center;
+            will-change: transform;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-user-drag: none;
+            cursor: zoom-in;
+        }
+
+        .lightbox.can-pan img {
+            cursor: grab;
+        }
+
+        .lightbox-stage.is-dragging img {
+            cursor: grabbing;
+        }
+
+        .lightbox-toolbar {
+            position: fixed;
+            left: 50%;
+            bottom: 20px;
+            transform: translateX(-50%);
+            z-index: 501;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 999px;
+            background: rgba(16, 26, 19, 0.66);
+            -webkit-backdrop-filter: blur(10px);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+        }
+
+        .lightbox-tool {
+            min-width: 32px;
+            height: 32px;
+            padding: 0 8px;
+            display: grid;
+            place-items: center;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 9px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.08);
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 0.16s ease, opacity 0.16s ease;
+        }
+
+        .lightbox-tool:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .lightbox-tool:disabled {
+            opacity: 0.35;
+            cursor: default;
+        }
+
+        .lightbox-reset {
+            padding: 0 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+
+        .lightbox-zoom-text {
+            min-width: 46px;
+            text-align: center;
+            color: #fff;
+            font-size: 0.75rem;
+            font-variant-numeric: tabular-nums;
         }
 
         .lightbox-close {
@@ -6825,6 +7124,7 @@
                 <nav class="top-nav" aria-label="主导航">
                     <a href="/pages/index.html">Git 洞察</a>
                     <a class="active" href="/pages/todo.html" aria-current="page">待办清单</a>
+                    <a href="/pages/shares.html">数据共享</a>
                     <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
                 </nav>
 
@@ -6848,6 +7148,13 @@
                             <div class="user-popover-meta">
                                 <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
                                 <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                                                                <div class="user-popover-meta-row">
+                                                                    <span>待办页桌宠</span>
+                                                                    <label class="switch" title="显示或隐藏待办页桌宠">
+                                                                        <input type="checkbox" data-todo-pet-toggle>
+                                                                        <span></span>
+                                                                    </label>
+                                                                </div>
                             </div>
                             <div class="user-popover-actions">
                                 <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
@@ -7334,24 +7641,35 @@
                     <section class="form-section">
                         <div class="section-head">
                             <div>
-                                <h3>图片附件</h3>
-                                <span class="section-meta">JPEG / PNG / GIF / WebP / BMP / AVIF</span>
+                                <h3>附件</h3>
+                                <span class="section-meta">图片可预览，其他文件仅保存与下载</span>
                             </div>
-                            <span class="section-meta" id="imageCountText">0 / 5</span>
+                            <span class="section-meta" id="attachmentCountText">0 / 5 图片 · 0 / 10 文件</span>
                         </div>
-                        <div class="image-previews" id="todoImagePreviews"></div>
-                        <input class="hidden" id="todoImagesInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/avif" multiple>
-                        <div>
-                            <button class="btn btn-sm upload-button" id="addImagesBtn" type="button">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                    <polyline points="17 8 12 3 7 8"></polyline>
-                                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                                </svg>
-                                选择图片
-                            </button>
+                        <div class="attachment-dropzone" id="attachmentDropzone">
+                            <div class="image-previews" id="todoImagePreviews"></div>
+                            <div class="file-attachment-list" id="todoFileList"></div>
+                            <span class="attachment-drop-hint">可将图片或文件直接拖入此区域</span>
+                            <input class="hidden" id="todoImagesInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/avif" multiple>
+                            <input class="hidden" id="todoFilesInput" type="file" multiple>
+                            <div class="attachment-actions">
+                                <button class="btn btn-sm upload-button" id="addImagesBtn" type="button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                    选择图片
+                                </button>
+                                <button class="btn btn-sm upload-button" id="addFilesBtn" type="button">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                    </svg>
+                                    选择文件
+                                </button>
+                            </div>
                         </div>
-                        <p class="field-hint">每个任务最多 5 张，单张不超过 8 MB。图片通过带 Token 的请求读取。</p>
+                        <p class="field-hint">图片最多 5 张（每张 ≤ 8 MB），其他文件最多 10 个（每个 ≤ 32 MB）。支持拖入、粘贴截图（Ctrl+V）；非图片文件不提供预览。</p>
                     </section>
                 </div>
 
@@ -7444,6 +7762,7 @@
             <div class="detail-meta-grid" id="detailMeta"></div>
             <div class="detail-tags" id="detailTags"></div>
             <div class="detail-images" id="detailImages"></div>
+            <div class="detail-files" id="detailFiles"></div>
         </div>
         <footer class="modal-footer detail-modal-footer">
             <button class="btn btn-sm" id="detailCompleteBtn" type="button">完成</button>
@@ -7502,7 +7821,15 @@
         <button class="lightbox-close" id="lightboxCloseBtn" type="button" aria-label="关闭图片预览">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
-        <img id="lightboxImage" alt="">
+        <div class="lightbox-stage" id="lightboxStage">
+            <img id="lightboxImage" alt="" draggable="false">
+        </div>
+        <div class="lightbox-toolbar" role="group" aria-label="图片缩放控制">
+            <button class="lightbox-tool" id="lightboxZoomOutBtn" type="button" aria-label="缩小图片" title="缩小（-）">−</button>
+            <span class="lightbox-zoom-text" id="lightboxZoomText" aria-live="polite">100%</span>
+            <button class="lightbox-tool" id="lightboxZoomInBtn" type="button" aria-label="放大图片" title="放大（+）">+</button>
+            <button class="lightbox-tool lightbox-reset" id="lightboxResetBtn" type="button" title="恢复到适应窗口（0）">适应窗口</button>
+        </div>
     </div>
 
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="false"></div>
@@ -7517,7 +7844,16 @@
         const TOKEN_KEY = 'gitstatus_todo_token';
         const USER_KEY = 'gitstatus_todo_user';
         const MAX_IMAGES = 5;
+        const MAX_FILES = 10;
         const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+        const MAX_FILE_BYTES = 32 * 1024 * 1024;
+        const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/avif']);
+        // 可在浏览器内安全预览的非图片类型（刻意排除 text/html、image/svg+xml 等可执行脚本的类型）
+        const BROWSER_PREVIEWABLE_TYPES = new Set([
+            'application/pdf',
+            'text/plain', 'text/markdown', 'text/csv', 'application/json',
+            'video/mp4', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/ogg'
+        ]);
         const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
         const PRIORITY_META = {
             high: { label: '高优先级', color: '#c9372c', soft: '#fff1ef' },
@@ -7535,6 +7871,8 @@
             trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>',
             close: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
             image: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+            paperclip: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>',
+            download: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
             alert: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
             refresh: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
             cut: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>',
@@ -7654,6 +7992,7 @@
             detailMeta: $('detailMeta'),
             detailTags: $('detailTags'),
             detailImages: $('detailImages'),
+            detailFiles: $('detailFiles'),
             detailCompleteBtn: $('detailCompleteBtn'),
             detailEditBtn: $('detailEditBtn'),
             detailDeleteBtn: $('detailDeleteBtn'),
@@ -7697,10 +8036,14 @@
             todoRemindAt: $('todoRemindAt'),
             todoRemindTime: $('todoRemindTime'),
             reminderMeta: $('reminderMeta'),
-            imageCountText: $('imageCountText'),
+            imageCountText: $('attachmentCountText'),
             todoImagePreviews: $('todoImagePreviews'),
+            todoFileList: $('todoFileList'),
+            attachmentDropzone: $('attachmentDropzone'),
             todoImagesInput: $('todoImagesInput'),
+            todoFilesInput: $('todoFilesInput'),
             addImagesBtn: $('addImagesBtn'),
+            addFilesBtn: $('addFilesBtn'),
             todoSubmitBtn: $('todoSubmitBtn'),
             manageLinksBtn: $('manageLinksBtn'),
             categoryCount: $('categoryCount'),
@@ -7721,15 +8064,28 @@
             confirmCancelBtn: $('confirmCancelBtn'),
             confirmOkBtn: $('confirmOkBtn'),
             lightboxCloseBtn: $('lightboxCloseBtn'),
-            lightboxImage: $('lightboxImage')
+            lightboxImage: $('lightboxImage'),
+            lightboxStage: $('lightboxStage'),
+            lightboxZoomText: $('lightboxZoomText'),
+            lightboxZoomInBtn: $('lightboxZoomInBtn'),
+            lightboxZoomOutBtn: $('lightboxZoomOutBtn'),
+            lightboxResetBtn: $('lightboxResetBtn')
         };
+
+        /** 客户端是否与本机服务同机：localhost / 127.0.0.1 / ::1 访问视为本机 */
+        function guessLocalHost() {
+            const host = String(window.location.hostname || '').toLowerCase();
+            return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+        }
 
         const state = {
             token: readStorage(TOKEN_KEY, ''),
             user: safeJsonParse(readStorage(USER_KEY, '')),
+            // 本机访问才允许“系统默认程序打开”，其他设备改为浏览器预览或下载
+            localClient: guessLocalHost(),
             authMode: 'login',
             selectedDate: formatLocalDate(new Date()),
-            onlySelectedDate: true,
+            onlySelectedDate: readStorage('gitstatus_todo_day_only', '1') !== '0',
             status: '',
             search: '',
             creationMode: readStorage('gitstatus_todo_creation_mode', 'day') === 'range' ? 'range' : 'day',
@@ -7777,6 +8133,7 @@
             calendarMonth: new Date().getMonth(),
             clipboard: null,
             folderPickerTodo: null,
+            todoFormOwnerId: null,
             dragTodoId: null,
             loadSeq: 0,
             loading: false,
@@ -7784,9 +8141,11 @@
             savingTodo: false,
             pendingTodoIds: new Set(),
             editingTodo: null,
+            pendingImages: [],
             pendingFiles: [],
             existingImages: [],
-            removedImageIds: new Set(),
+            existingFiles: [],
+            removedAttachmentIds: new Set(),
             pendingPreviewUrls: [],
             editingCategoryId: null,
             editingTagId: null,
@@ -7798,6 +8157,13 @@
 
         let datePickerState = null;
         let modalStack = [];
+        // 图片预览缩放状态：scale 为倍率，x/y 为平移偏移
+        const LIGHTBOX_MIN_SCALE = 1;
+        const LIGHTBOX_MAX_SCALE = 6;
+        const lightboxView = { scale: 1, x: 0, y: 0 };
+        let lightboxDrag = null;
+        let lightboxPinch = null;
+        const lightboxTouchPoints = new Map();
         let previousFocus = null;
         let searchTimer = null;
         let toastId = 0;
@@ -7955,7 +8321,11 @@
             const exact = {
                 'invalid username or password': '用户名或密码不正确',
                 'username already exists': '这个用户名已被使用',
+                'account pending approval; please wait for an administrator to review it': '账号正在等待管理员审核，暂时无法登录',
+                'account is disabled': '账号已被禁用，请联系管理员',
+                'too many pending registrations; please try again later': '待审核注册过多，请稍后再试',
                 'username and password are required': '请输入用户名和密码',
+                'system open is only available on the host machine': '仅能在运行服务的电脑上直接打开，其他设备请预览或下载',
                 'username must be 3-32 characters': '用户名长度需要为 3–32 个字符',
                 'password must be at least 6 characters': '密码至少需要 6 个字符',
                 'name is required': '名称不能为空',
@@ -8020,7 +8390,7 @@
             el.loginModeBtn.setAttribute('aria-selected', String(!isRegister));
             el.registerModeBtn.setAttribute('aria-selected', String(isRegister));
             el.authTitle.textContent = isRegister ? '创建你的工作区' : '欢迎回来';
-            el.authSubtitle.textContent = isRegister ? '注册后即可独立保存你的待办数据。' : '登录后继续管理你的待办。';
+            el.authSubtitle.textContent = isRegister ? '注册后需要管理员审核通过才能登录。' : '登录后继续管理你的待办。';
             el.authSubmitBtn.textContent = isRegister ? '创建账号' : '登录';
             el.authPassword.autocomplete = isRegister ? 'new-password' : 'current-password';
             el.authPasswordHint.classList.toggle('hidden', !isRegister);
@@ -8199,6 +8569,25 @@
                 }
             }
 
+            // 图片预览支持 + / - / 0 快捷缩放
+            if (el.imageLightbox.classList.contains('is-open')) {
+                if (event.key === '+' || event.key === '=') {
+                    event.preventDefault();
+                    zoomLightboxAt(lightboxView.scale * 1.4);
+                    return;
+                }
+                if (event.key === '-' || event.key === '_') {
+                    event.preventDefault();
+                    zoomLightboxAt(lightboxView.scale / 1.4);
+                    return;
+                }
+                if (event.key === '0') {
+                    event.preventDefault();
+                    resetLightboxView();
+                    return;
+                }
+            }
+
             if (event.key !== 'Tab' || modalStack.length === 0) return;
             const topLayer = modalStack[modalStack.length - 1];
             const focusable = Array.from(topLayer.querySelectorAll('button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
@@ -8300,11 +8689,20 @@
                 if (!response.ok || payload.res === false) {
                     throw new ApiError(humanizeError(payload.message, '登录失败'), response.status);
                 }
+                // 新注册账号需要管理员审核，服务端不会返回 token
+                if (payload.pending && payload.user?.status === 'pending') {
+                    el.authForm.reset();
+                    closeLayer(el.authModal);
+                    setAuthMode('login');
+                    showToast('注册已提交，请等待管理员审核通过后登录。', 'success');
+                    return;
+                }
                 if (!payload.token || !payload.user) {
                     throw new ApiError('服务返回的登录信息不完整');
                 }
 
                 setAuthSession(payload.token, payload.user);
+                if (typeof payload.local === 'boolean') state.localClient = payload.local;
                 el.authForm.reset();
                 el.authPasswordHint.classList.toggle('hidden', true);
                 closeLayer(el.authModal);
@@ -8314,7 +8712,8 @@
                 showError(humanizeError(error.message, '登录失败，请检查服务是否正常运行'));
             } finally {
                 el.authSubmitBtn.disabled = false;
-                el.authSubmitBtn.textContent = originalText;
+                // 注册待审核分支会切回登录模式，按钮文案需要跟随当前模式
+                el.authSubmitBtn.textContent = state.authMode === 'register' ? '创建账号' : '登录';
             }
         }
 
@@ -8390,18 +8789,21 @@
                 if (todo.repeatEndDate && dateKey > String(todo.repeatEndDate).slice(0, 10)) return false;
                 return true;
             }
-            if (todo.dueDate) {
-                if (todo.isCompleted) {
-                    return String(todo.dueDate).slice(0, 10) === dateKey
-                        || String(todo.completionDate || '').slice(0, 10) === dateKey;
-                }
-                return String(todo.dueDate).slice(0, 10) === dateKey;
-            }
+            const dueDateKey = todo.dueDate ? String(todo.dueDate).slice(0, 10) : '';
             if (todo.isCompleted) {
-                return String(todo.completionDate || '').slice(0, 10) === dateKey;
+                // 已完成：出现在完成日期，有截止日期时也可在截止日期看到
+                const completionDateKey = String(todo.completionDate || '').slice(0, 10);
+                return (Boolean(dueDateKey) && dueDateKey === dateKey) || completionDateKey === dateKey;
+            }
+            const createdDateKey = String(todo.createdAt || '').slice(0, 10);
+            if (dueDateKey) {
+                // 有截止日期：创建日期到截止日期之间每天可见
+                if (!createdDateKey) return dateKey <= dueDateKey;
+                // 截止日期早于创建日期时不构成区间，只保留截止日期当天
+                if (dueDateKey < createdDateKey) return dateKey === dueDateKey;
+                return dateKey >= createdDateKey && dateKey <= dueDateKey;
             }
             // 无截止日期的单次事件：只在其创建日期及之后显示
-            const createdDateKey = String(todo.createdAt || '').slice(0, 10);
             return !createdDateKey || dateKey >= createdDateKey;
         }
 
@@ -8507,6 +8909,7 @@
 
         async function handleDayOnlyToggle() {
             state.onlySelectedDate = Boolean(el.dayOnlyToggle?.checked);
+            writeStorage('gitstatus_todo_day_only', state.onlySelectedDate ? '1' : '0');
             state.page = 1;
             await loadTodos({ silent: true });
         }
@@ -9136,12 +9539,15 @@
             }
             const rootNodes = childrenMap.get('root') || [];
 
-            const projectButton = (todo) => `<li>
-                <button class="folder-project-btn${todo.isCompleted ? ' is-completed' : ''}" type="button" draggable="true" data-folder-todo-id="${Number(todo.id)}" title="${escapeHtml(todo.title)} · 可拖动">
+            const projectButton = (todo) => {
+                const readonlyShare = Boolean(todo.shared) && todo.permission === 'readonly';
+                return `<li>
+                <button class="folder-project-btn${todo.isCompleted ? ' is-completed' : ''}" type="button" ${readonlyShare ? '' : 'draggable="true"'} data-folder-todo-id="${Number(todo.id)}" title="${escapeHtml(todo.title)}${readonlyShare ? ' · 共享只读' : ' · 可拖动'}">
                     <span class="folder-project-status" aria-hidden="true">${todo.isCompleted ? SVG.check : ''}</span>
                     <span class="folder-project-name">${escapeHtml(todo.title)}</span>
                 </button>
             </li>`;
+            };
             const projectList = (tasks) => tasks.length
                 ? `<ul class="folder-project-list">${tasks.map(projectButton).join('')}</ul>`
                 : '';
@@ -9154,14 +9560,19 @@
                 const expanded = !state.collapsedFolders.has(id);
                 const active = state.folderId === id;
                 const color = safeColor(node.category.color);
-                return `<li class="folder-tree-node">
+                const shared = Boolean(node.category.shared);
+                const sharedReadonly = shared && node.category.permission === 'readonly';
+                const shareMeta = shared
+                    ? `<span class="folder-share-badge${sharedReadonly ? ' is-readonly' : ''}" title="共享自 ${escapeHtml(node.category.ownerUsername || '其他用户')}">${escapeHtml(node.category.ownerUsername || '其他用户')}${sharedReadonly ? ' · 只读' : ''}</span>`
+                    : '';
+                return `<li class="folder-tree-node${shared ? ' is-shared' : ''}">
                     <div class="folder-tree-row${active ? ' active' : ''}${state.selectedFolders.has(id) && state.selectedFolders.size > 1 ? ' multi-selected' : ''}" data-folder-drop="${id}">
                         <button class="folder-expand-btn${expanded && expandable ? ' expanded' : ''}${expandable ? '' : ' is-empty'}" type="button" data-folder-expand="${id}" aria-label="${expanded ? '收起' : '展开'} ${escapeHtml(node.category.name)}" aria-expanded="${expanded && expandable}"${expandable ? '' : ' tabindex="-1"'}>${SVG.chevronRight}</button>
-                        <button class="folder-select-btn" type="button" draggable="true" data-folder-select="${id}" aria-pressed="${state.selectedFolders.has(id)}" style="--folder-color:${color};" title="${escapeHtml(node.path)} · Ctrl/⌘ 多选 · 可拖动">
-                            ${SVG.folder}<span class="folder-name">${escapeHtml(node.category.name)}</span>
+                        <button class="folder-select-btn" type="button" draggable="${sharedReadonly ? 'false' : 'true'}" data-folder-select="${id}" aria-pressed="${state.selectedFolders.has(id)}" style="--folder-color:${color};" title="${escapeHtml(node.path)}${shared ? ` · 共享自 ${escapeHtml(node.category.ownerUsername || '其他用户')}` : ' · Ctrl/⌘ 多选 · 可拖动'}">
+                            ${SVG.folder}<span class="folder-name">${escapeHtml(node.category.name)}</span>${shareMeta}
                         </button>
-                        <button class="folder-add-child-btn" type="button" data-folder-add="${id}" title="新建待办或子文件夹" aria-label="在 ${escapeHtml(node.category.name)} 中新建" aria-haspopup="menu" aria-expanded="false">${SVG.plus}</button>
-                        <button class="folder-delete-btn" type="button" data-folder-delete="${id}" title="删除文件夹 ${escapeHtml(node.category.name)}" aria-label="删除文件夹 ${escapeHtml(node.category.name)}">${SVG.trash}</button>
+                        ${sharedReadonly ? '' : `<button class="folder-add-child-btn" type="button" data-folder-add="${id}" title="新建待办${shared ? '' : '或子文件夹'}" aria-label="在 ${escapeHtml(node.category.name)} 中新建" aria-haspopup="menu" aria-expanded="false">${SVG.plus}</button>`}
+                        ${shared ? '' : `<button class="folder-delete-btn" type="button" data-folder-delete="${id}" title="删除文件夹 ${escapeHtml(node.category.name)}" aria-label="删除文件夹 ${escapeHtml(node.category.name)}">${SVG.trash}</button>`}
                     </div>
                     ${folderInlineFormHtml(id)}
                     ${expanded ? projectList(tasks) : ''}
@@ -9226,6 +9637,10 @@
             closeFolderAddMenu();
             state.folderAddMenuId = String(folderId);
             state.folderAddMenuTrigger = trigger;
+            // 共享文件夹内不允许创建子文件夹（文件夹结构只归所有者维护）
+            const node = state.categoryTree.find(({ category }) => String(category.id) === String(folderId));
+            const folderActionBtn = el.folderAddMenu.querySelector('[data-folder-add-action="folder"]');
+            if (folderActionBtn) folderActionBtn.classList.toggle('hidden', Boolean(node?.category?.shared));
             trigger.setAttribute('aria-expanded', 'true');
             el.folderAddMenu.classList.remove('hidden');
             positionFolderAddMenu();
@@ -9246,13 +9661,21 @@
 
             const completed = Boolean(todo.isCompleted);
             const inactive = todo.scheduleType === 'daily' && todo.isActiveOnDate === false;
+            const sharedReadonly = Boolean(todo.shared) && todo.permission === 'readonly';
             const badges = [priorityBadge(todo), categoryBadge(todo)];
+            if (todo.shared) {
+                badges.push(`<span class="badge badge-share${sharedReadonly ? ' is-readonly' : ''}">共享 · ${escapeHtml(todo.ownerUsername || '其他用户')}${sharedReadonly ? ' · 只读' : ''}</span>`);
+            }
             if (completed) badges.push('<span class="badge" style="color:#1f7a4d;border-color:#cfe6d7;background:#eef8f2;">已完成</span>');
             else if (todo.isOverdue) badges.push('<span class="badge badge-overdue">已逾期</span>');
             else if (inactive) badges.push('<span class="badge badge-inactive">当日不生效</span>');
             el.detailBadges.innerHTML = badges.filter(Boolean).join('');
 
             const meta = [];
+            if (todo.shared) {
+                meta.push(detailMetaItem('共享自', todo.ownerUsername || '其他用户'));
+                meta.push(detailMetaItem('共享权限', sharedReadonly ? '只读' : '可编辑'));
+            }
             meta.push(detailMetaItem('文件夹', todo.category?.name || '收件箱'));
             meta.push(detailMetaItem('状态', completed ? '已完成' : (todo.isOverdue ? '已逾期' : (inactive ? '当日不生效' : '待办')), !completed && todo.isOverdue));
             if (todo.scheduleType === 'daily') {
@@ -9281,10 +9704,36 @@
             </button>`).join('');
             if (images.length) hydrateImages(el.detailImages);
 
+            // 非图片附件只列出文件名与大小；点击名称交给系统默认程序打开，右侧按钮下载
+            const attachments = Array.isArray(todo.attachments)
+                ? todo.attachments
+                : images.map((image) => ({ ...image, kind: 'image' }));
+            const files = attachments.filter((item) => item && item.kind === 'file');
+            el.detailFiles.innerHTML = files.map((file) => {
+                const mime = String(file.mimeType || '').toLowerCase();
+                const actionTitle = state.localClient
+                    ? `用系统默认程序打开 ${file.originalName || '附件'}`
+                    : (BROWSER_PREVIEWABLE_TYPES.has(mime)
+                        ? `在浏览器中打开 ${file.originalName || '附件'}`
+                        : `下载 ${file.originalName || '附件'}`);
+                return `<div class="detail-file-item">
+                <button class="detail-file-open" type="button" data-detail-file-open="${Number(file.id)}" title="${escapeHtml(actionTitle)}">
+                    <span class="file-attachment-icon" aria-hidden="true">${SVG.paperclip}</span>
+                    <span class="file-attachment-name">${escapeHtml(file.originalName || '附件')}</span>
+                    <span class="file-attachment-meta">${formatFileSize(file.size)}</span>
+                </button>
+                <button class="detail-file-download" type="button" data-detail-file-download="${Number(file.id)}" title="下载 ${escapeHtml(file.originalName || '附件')}" aria-label="下载 ${escapeHtml(file.originalName || '附件')}">${SVG.download}</button>
+            </div>`;
+            }).join('');
+
             el.detailCompleteBtn.textContent = completed ? '恢复' : '完成';
-            el.detailCompleteBtn.disabled = !completed && inactive;
+            el.detailCompleteBtn.disabled = sharedReadonly || (!completed && inactive);
             el.detailEditBtn.dataset.id = String(todo.id);
             el.detailDeleteBtn.dataset.id = String(todo.id);
+            el.detailEditBtn.disabled = sharedReadonly;
+            el.detailDeleteBtn.disabled = sharedReadonly;
+            el.detailEditBtn.title = sharedReadonly ? '只读共享，无法编辑' : '编辑';
+            el.detailDeleteBtn.title = sharedReadonly ? '只读共享，无法删除' : '删除';
         }
 
         function openTodoDetail(todo) {
@@ -9393,18 +9842,31 @@
 
         function renderFilterOptions() {
             const tagValue = state.tagId;
-            el.tagFilter.innerHTML = '<option value="">全部标签</option>' + state.tags.map((tag) => `<option value="${Number(tag.id)}">${escapeHtml(tag.name)}</option>`).join('');
+            el.tagFilter.innerHTML = '<option value="">全部标签</option>' + state.tags.map((tag) => {
+                const prefix = tag.shared ? `${tag.ownerUsername || '共享'} / ` : '';
+                return `<option value="${Number(tag.id)}">${escapeHtml(prefix + tag.name)}</option>`;
+            }).join('');
             if (!state.tags.some((tag) => String(tag.id) === String(tagValue))) state.tagId = '';
             el.tagFilter.value = state.tagId;
             renderFolderTree();
         }
 
-        function categorySelectOptionsHtml(selectedId, { excludeId = null, includeRoot = true } = {}) {
+        function categorySelectOptionsHtml(selectedId, { excludeId = null, includeRoot = true, ownerId = null, writableOnly = false } = {}) {
             const excluded = excludeId === null ? new Set() : getDescendantIds(excludeId);
             const options = [];
-            if (includeRoot) options.push('<option value="">收件箱（无分类）</option>');
+            const ownerFilter = ownerId === null ? null : Number(ownerId);
+            const ownId = Number(state.user?.id || 0);
+            if (includeRoot) {
+                const sharedOwner = ownerFilter !== null && ownerFilter !== ownId
+                    ? state.categories.find((category) => Number(category.ownerId) === ownerFilter)?.ownerUsername
+                    : '';
+                options.push(`<option value="">${sharedOwner ? `${escapeHtml(sharedOwner)} 的收件箱（无分类）` : '收件箱（无分类）'}</option>`);
+            }
             for (const { category, depth, path } of state.categoryTree) {
                 if (excluded.has(Number(category.id))) continue;
+                // 编辑共享任务时只允许选择同一所有者、且可写的文件夹
+                if (ownerFilter !== null && Number(category.ownerId ?? ownId) !== ownerFilter) continue;
+                if (writableOnly && category.shared && category.permission === 'readonly') continue;
                 const selected = String(selectedId) === String(category.id) ? ' selected' : '';
                 options.push(`<option value="${Number(category.id)}"${selected}>${escapeHtml('— '.repeat(Math.min(depth, 5)) + (depth > 0 ? path.split(' / ').pop() : category.name))}</option>`);
             }
@@ -9415,13 +9877,16 @@
             return Array.from(el.todoTagPicker.querySelectorAll('input[name="todoTag"]:checked')).map((input) => Number(input.value));
         }
 
-        function renderTodoTagPicker(selectedIds = []) {
+        function renderTodoTagPicker(selectedIds = [], ownerId = null) {
             const selected = new Set((selectedIds || []).map(Number));
-            if (state.tags.length === 0) {
-                el.todoTagPicker.innerHTML = '<span class="empty-inline">还没有标签，可在“管理分类与标签”中创建。</span>';
+            const ownerFilter = ownerId === null ? null : Number(ownerId);
+            const ownId = Number(state.user?.id || 0);
+            const visibleTags = state.tags.filter((tag) => ownerFilter === null || Number(tag.ownerId ?? ownId) === ownerFilter);
+            if (visibleTags.length === 0) {
+                el.todoTagPicker.innerHTML = '<span class="empty-inline">该数据所有者还没有标签。</span>';
                 return;
             }
-            el.todoTagPicker.innerHTML = state.tags.map((tag) => {
+            el.todoTagPicker.innerHTML = visibleTags.map((tag) => {
                 const id = Number(tag.id);
                 return `<label class="tag-option" style="${colorStyleAttributes(tag.color)}">
                     <input type="checkbox" name="todoTag" value="${id}"${selected.has(id) ? ' checked' : ''}>
@@ -9433,20 +9898,23 @@
         function refreshTodoReferenceControls() {
             const categoryValue = el.todoCategory.value;
             const selectedTagIds = selectedTodoTagIds();
-            el.todoCategory.innerHTML = categorySelectOptionsHtml(categoryValue);
+            el.todoCategory.innerHTML = categorySelectOptionsHtml(categoryValue, {
+                ownerId: state.todoFormOwnerId ?? null,
+                writableOnly: true
+            });
             if (!Array.from(el.todoCategory.options).some((option) => option.value === String(categoryValue))) {
                 el.todoCategory.value = '';
             } else {
                 el.todoCategory.value = categoryValue;
             }
-            renderTodoTagPicker(selectedTagIds);
+            renderTodoTagPicker(selectedTagIds, state.todoFormOwnerId ?? null);
         }
 
         function categoryParentOptionsHtml(excludeId = null, selectedParentId = null) {
             const excluded = excludeId === null ? new Set() : getDescendantIds(excludeId);
             const rootSelected = selectedParentId === null || selectedParentId === '' ? ' selected' : '';
             return `<option value=""${rootSelected}>无父级（顶级分类）</option>` + state.categoryTree
-                .filter(({ category }) => !excluded.has(Number(category.id)))
+                .filter(({ category }) => !category.shared && !excluded.has(Number(category.id)))
                 .map(({ category, depth, path }) => {
                     const selected = String(selectedParentId) === String(category.id) ? ' selected' : '';
                     return `<option value="${Number(category.id)}"${selected}>${escapeHtml('— '.repeat(Math.min(depth, 5)) + (depth > 0 ? path.split(' / ').pop() : category.name))}</option>`;
@@ -9456,21 +9924,25 @@
 
         function renderManager() {
             if (!el.manageModal) return;
-            el.categoryCount.textContent = String(state.categories.length);
-            el.tagCount.textContent = String(state.tags.length);
+            // 管理弹窗只展示自己的分类与标签，共享数据不可在此修改
+            const ownCategories = state.categories.filter((category) => !category.shared);
+            const ownTags = state.tags.filter((tag) => !tag.shared);
+            const ownCategoryTree = state.categoryTree.filter(({ category }) => !category.shared);
+            el.categoryCount.textContent = String(ownCategories.length);
+            el.tagCount.textContent = String(ownTags.length);
             el.categoryAddParent.innerHTML = categoryParentOptionsHtml();
 
-            if (state.editingCategoryId !== null && !state.categories.some((category) => Number(category.id) === Number(state.editingCategoryId))) {
+            if (state.editingCategoryId !== null && !ownCategories.some((category) => Number(category.id) === Number(state.editingCategoryId))) {
                 state.editingCategoryId = null;
             }
-            if (state.editingTagId !== null && !state.tags.some((tag) => Number(tag.id) === Number(state.editingTagId))) {
+            if (state.editingTagId !== null && !ownTags.some((tag) => Number(tag.id) === Number(state.editingTagId))) {
                 state.editingTagId = null;
             }
 
-            if (state.categoryTree.length === 0) {
+            if (ownCategoryTree.length === 0) {
                 el.categoryManagerList.innerHTML = '<div class="entity-empty">还没有分类。上方输入名称即可创建第一个分类。</div>';
             } else {
-                el.categoryManagerList.innerHTML = state.categoryTree.map(({ category, depth, path }) => {
+                el.categoryManagerList.innerHTML = ownCategoryTree.map(({ category, depth, path }) => {
                     const id = Number(category.id);
                     const color = safeColor(category.color);
                     if (Number(state.editingCategoryId) === id) {
@@ -9502,10 +9974,10 @@
                 }).join('');
             }
 
-            if (state.tags.length === 0) {
+            if (ownTags.length === 0) {
                 el.tagManagerList.innerHTML = '<div class="entity-empty">还没有标签。标签可以跨分类标记任务。</div>';
             } else {
-                el.tagManagerList.innerHTML = state.tags.map((tag) => {
+                el.tagManagerList.innerHTML = ownTags.map((tag) => {
                     const id = Number(tag.id);
                     const color = safeColor(tag.color);
                     if (Number(state.editingTagId) === id) {
@@ -9795,6 +10267,19 @@
             </div>`;
         }
 
+        /** 非图片附件只展示名称，不做任何预览 */
+        function renderCardFiles(attachments) {
+            const files = (Array.isArray(attachments) ? attachments : [])
+                .filter((item) => item && item.kind === 'file');
+            if (files.length === 0) return '';
+            const visible = files.slice(0, 2);
+            const extra = files.length - visible.length;
+            return `<div class="card-files">
+                ${visible.map((file) => `<span class="card-file-chip" title="${escapeHtml(file.originalName || '附件')}">${SVG.paperclip}<span>${escapeHtml(file.originalName || '附件')}</span></span>`).join('')}
+                ${extra > 0 ? `<span class="card-file-chip">+${extra}</span>` : ''}
+            </div>`;
+        }
+
         function renderScheduleMeta(todo) {
             const items = [];
             if (todo.scheduleType === 'daily') {
@@ -9839,16 +10324,22 @@
             const isCompleted = Boolean(todo.isCompleted);
             const inactive = todo.scheduleType === 'daily' && todo.isActiveOnDate === false;
             const pending = state.pendingTodoIds.has(id);
-            const toggleDisabled = pending || (!isCompleted && inactive);
+            // 共享数据只读时禁用所有写操作入口，后端仍会做最终校验
+            const sharedReadonly = Boolean(todo.shared) && todo.permission === 'readonly';
+            const toggleDisabled = pending || (!isCompleted && inactive) || sharedReadonly;
             const tags = Array.isArray(todo.tags) ? todo.tags : [];
             const tagMarkup = tags.slice(0, 5).map((tag) => `<span class="tag-chip" style="${colorStyleAttributes(tag.color)}">${escapeHtml(tag.name)}</span>`).join('');
             const description = String(todo.description || '').trim();
             const classes = ['todo-card', 'folder-mode'];
             if (isCompleted) classes.push('is-completed');
             if (todo.isOverdue) classes.push('is-overdue');
+            if (todo.shared) classes.push('is-shared');
             if (state.clipboard && Number(state.clipboard.todoId) === id) classes.push('clipboard-source');
-            const draggableAttr = ' draggable="true"';
-            const folderOps = `<div class="folder-ops">
+            const draggableAttr = sharedReadonly ? '' : ' draggable="true"';
+            const shareBadge = todo.shared
+                ? `<span class="badge badge-share${sharedReadonly ? ' is-readonly' : ''}" title="共享自 ${escapeHtml(todo.ownerUsername || '其他用户')}">共享 · ${escapeHtml(todo.ownerUsername || '其他用户')}${sharedReadonly ? ' · 只读' : ''}</span>`
+                : '';
+            const folderOps = sharedReadonly ? '' : `<div class="folder-ops">
                 <button class="folder-op" type="button" data-action="cut-todo" data-id="${id}" title="剪切到剪贴板">${SVG.cut}<span>剪切</span></button>
                 <button class="folder-op" type="button" data-action="copy-todo" data-id="${id}" title="复制到剪贴板">${SVG.copy}<span>复制</span></button>
                 <button class="folder-op" type="button" data-action="move-todo" data-id="${id}" title="移动到其他文件夹">${SVG.move}<span>移动</span></button>
@@ -9856,18 +10347,19 @@
 
             return `<article class="${classes.join(' ')}" data-todo-id="${id}" tabindex="0" aria-label="查看详情：${escapeHtml(todo.title)}" style="--priority-color:${priority.color};"${draggableAttr}>
                 <div class="card-top">
-                    <button class="todo-check${isCompleted ? ' is-checked' : ''}" type="button" data-action="toggle-todo" data-id="${id}" aria-label="${isCompleted ? '取消完成' : '标记完成'} ${escapeHtml(todo.title)}" title="${toggleDisabled && inactive && !isCompleted ? '所选日期不在这个每日任务的重复区间内' : (isCompleted ? '取消完成' : '标记完成')}"${toggleDisabled ? ' disabled' : ''}>
+                    <button class="todo-check${isCompleted ? ' is-checked' : ''}" type="button" data-action="toggle-todo" data-id="${id}" aria-label="${isCompleted ? '取消完成' : '标记完成'} ${escapeHtml(todo.title)}" title="${sharedReadonly ? '只读共享，无法修改完成状态' : (toggleDisabled && inactive && !isCompleted ? '所选日期不在这个每日任务的重复区间内' : (isCompleted ? '取消完成' : '标记完成'))}"${toggleDisabled ? ' disabled' : ''}>
                         ${isCompleted ? SVG.check : ''}
                     </button>
                     <div class="card-badges">
                         ${priorityBadge(todo)}
                         ${categoryBadge(todo)}
+                        ${shareBadge}
                         ${inactive ? '<span class="badge badge-inactive">所选日期不生效</span>' : ''}
                         ${todo.isOverdue ? '<span class="badge badge-overdue">已逾期</span>' : ''}
                     </div>
                     <div class="card-menu">
-                        <button class="icon-btn" type="button" data-action="edit-todo" data-id="${id}" aria-label="编辑 ${escapeHtml(todo.title)}" title="编辑">${SVG.edit}</button>
-                        <button class="icon-btn delete" type="button" data-action="delete-todo" data-id="${id}" aria-label="删除 ${escapeHtml(todo.title)}" title="删除">${SVG.trash}</button>
+                        <button class="icon-btn" type="button" data-action="edit-todo" data-id="${id}" aria-label="编辑 ${escapeHtml(todo.title)}" title="${sharedReadonly ? '只读共享，无法编辑' : '编辑'}"${sharedReadonly ? ' disabled' : ''}>${SVG.edit}</button>
+                        <button class="icon-btn delete" type="button" data-action="delete-todo" data-id="${id}" aria-label="删除 ${escapeHtml(todo.title)}" title="${sharedReadonly ? '只读共享，无法删除' : '删除'}"${sharedReadonly ? ' disabled' : ''}>${SVG.trash}</button>
                     </div>
                 </div>
                 <div class="todo-main">
@@ -9875,6 +10367,7 @@
                     ${description ? `<p class="todo-description">${escapeHtml(description)}</p>` : ''}
                     ${tagMarkup ? `<div class="tag-row">${tagMarkup}${tags.length > 5 ? `<span class="tag-chip">+${tags.length - 5}</span>` : ''}</div>` : ''}
                     ${renderCardImages(todo.images)}
+                    ${renderCardFiles(todo.attachments)}
                 </div>
                 <footer class="todo-footer">
                     <div class="meta-row">${renderScheduleMeta(todo)}</div>
@@ -9888,12 +10381,17 @@
         }
 
         function folderActionsHtml(folderId) {
-            const paste = state.clipboard
+            const node = state.categoryTree.find(({ category }) => String(category.id) === String(folderId));
+            const sharedReadonly = Boolean(node?.category?.shared && node.category.permission === 'readonly');
+            const paste = state.clipboard && !sharedReadonly
                 ? `<button class="folder-mini-btn paste" type="button" data-action="paste-clipboard" data-folder-id="${folderDropValue(folderId)}">${SVG.paste}<span class="optional-label">粘贴</span></button>`
                 : '';
+            const create = sharedReadonly
+                ? ''
+                : `<button class="folder-mini-btn" type="button" data-action="new-todo-folder" data-folder-id="${folderDropValue(folderId)}" title="在此文件夹中新建待办">${SVG.plus}<span class="optional-label">新建</span></button>`;
             return `<div class="folder-section-actions">
                 ${paste}
-                <button class="folder-mini-btn" type="button" data-action="new-todo-folder" data-folder-id="${folderDropValue(folderId)}" title="在此文件夹中新建待办">${SVG.plus}<span class="optional-label">新建</span></button>
+                ${create}
             </div>`;
         }
 
@@ -10564,10 +11062,138 @@
             }));
         }
 
+        // ================================================================
+        // Image lightbox with zoom / pan
+        // ================================================================
+        function lightboxClampScale(value) {
+            return Math.min(LIGHTBOX_MAX_SCALE, Math.max(LIGHTBOX_MIN_SCALE, value));
+        }
+
+        function renderLightboxTransform() {
+            el.lightboxImage.style.transform = `translate(${lightboxView.x}px, ${lightboxView.y}px) scale(${lightboxView.scale})`;
+            el.lightboxZoomText.textContent = `${Math.round(lightboxView.scale * 100)}%`;
+            el.imageLightbox.classList.toggle('can-pan', lightboxView.scale > 1.001);
+            el.lightboxZoomInBtn.disabled = lightboxView.scale >= LIGHTBOX_MAX_SCALE - 0.001;
+            el.lightboxZoomOutBtn.disabled = lightboxView.scale <= LIGHTBOX_MIN_SCALE + 0.001;
+        }
+
+        function resetLightboxView() {
+            lightboxView.scale = 1;
+            lightboxView.x = 0;
+            lightboxView.y = 0;
+            renderLightboxTransform();
+        }
+
+        /** 以指定屏幕坐标为中心缩放；不传坐标时以视口中心为锚点 */
+        function zoomLightboxAt(nextScale, anchorX = null, anchorY = null) {
+            const scale = lightboxClampScale(nextScale);
+            if (Math.abs(scale - lightboxView.scale) < 0.001) return;
+            let dx = 0;
+            let dy = 0;
+            if (anchorX !== null && anchorY !== null) {
+                const rect = el.imageLightbox.getBoundingClientRect();
+                dx = anchorX - (rect.left + rect.width / 2);
+                dy = anchorY - (rect.top + rect.height / 2);
+            }
+            const ratio = scale / lightboxView.scale;
+            lightboxView.x = dx - (dx - lightboxView.x) * ratio;
+            lightboxView.y = dy - (dy - lightboxView.y) * ratio;
+            lightboxView.scale = scale;
+            // 回到 100% 时取消所有平移，避免图片停在角落
+            if (scale <= 1.001) {
+                lightboxView.x = 0;
+                lightboxView.y = 0;
+            }
+            renderLightboxTransform();
+        }
+
+        function lightboxTouchDistance() {
+            const points = Array.from(lightboxTouchPoints.values());
+            if (points.length < 2) return 0;
+            return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+        }
+
+        function lightboxTouchCenter() {
+            const points = Array.from(lightboxTouchPoints.values());
+            if (points.length < 2) return { x: 0, y: 0 };
+            return {
+                x: (points[0].x + points[1].x) / 2,
+                y: (points[0].y + points[1].y) / 2
+            };
+        }
+
+        function handleLightboxPointerDown(event) {
+            if (event.pointerType === 'touch') {
+                lightboxTouchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                if (lightboxTouchPoints.size === 2) {
+                    lightboxPinch = {
+                        distance: lightboxTouchDistance(),
+                        scale: lightboxView.scale
+                    };
+                    lightboxDrag = null;
+                    el.lightboxStage.classList.remove('is-dragging');
+                    return;
+                }
+            }
+            if (lightboxView.scale <= 1.001 || event.button !== 0) return;
+            event.preventDefault();
+            lightboxDrag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                originX: lightboxView.x,
+                originY: lightboxView.y
+            };
+            el.lightboxImage.setPointerCapture(event.pointerId);
+            el.lightboxStage.classList.add('is-dragging');
+        }
+
+        function handleLightboxPointerMove(event) {
+            if (event.pointerType === 'touch' && lightboxTouchPoints.has(event.pointerId)) {
+                lightboxTouchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                if (lightboxPinch && lightboxTouchPoints.size >= 2) {
+                    const distance = lightboxTouchDistance();
+                    if (lightboxPinch.distance > 0) {
+                        const center = lightboxTouchCenter();
+                        zoomLightboxAt(
+                            lightboxPinch.scale * (distance / lightboxPinch.distance),
+                            center.x,
+                            center.y
+                        );
+                    }
+                    return;
+                }
+            }
+            if (!lightboxDrag || event.pointerId !== lightboxDrag.pointerId) return;
+            event.preventDefault();
+            lightboxView.x = lightboxDrag.originX + (event.clientX - lightboxDrag.startX);
+            lightboxView.y = lightboxDrag.originY + (event.clientY - lightboxDrag.startY);
+            renderLightboxTransform();
+        }
+
+        function endLightboxPointer(event) {
+            if (event && event.pointerType === 'touch') {
+                lightboxTouchPoints.delete(event.pointerId);
+            }
+            if (lightboxTouchPoints.size < 2) lightboxPinch = null;
+            if (lightboxDrag && event && event.pointerId === lightboxDrag.pointerId) {
+                lightboxDrag = null;
+                el.lightboxStage.classList.remove('is-dragging');
+            }
+        }
+
+        function handleLightboxWheel(event) {
+            if (!el.imageLightbox.classList.contains('is-open')) return;
+            event.preventDefault();
+            const factor = event.deltaY < 0 ? 1.18 : 1 / 1.18;
+            zoomLightboxAt(lightboxView.scale * factor, event.clientX, event.clientY);
+        }
+
         function openLightbox(src, alt = '图片预览') {
             if (!src) return;
             el.lightboxImage.src = src;
             el.lightboxImage.alt = alt;
+            resetLightboxView();
             el.imageLightbox.classList.add('is-open');
             el.imageLightbox.setAttribute('aria-hidden', 'false');
             document.body.classList.add('modal-open');
@@ -10577,6 +11203,11 @@
             el.imageLightbox.classList.remove('is-open');
             el.imageLightbox.setAttribute('aria-hidden', 'true');
             el.lightboxImage.removeAttribute('src');
+            lightboxDrag = null;
+            lightboxPinch = null;
+            lightboxTouchPoints.clear();
+            el.lightboxStage.classList.remove('is-dragging');
+            resetLightboxView();
             if (modalStack.length === 0) document.body.classList.remove('modal-open');
         }
 
@@ -10618,25 +11249,53 @@
             updateTaskDateTriggers();
         }
 
-        function cleanupPendingImages() {
+        function cleanupPendingAttachments() {
             for (const url of state.pendingPreviewUrls) {
                 try { URL.revokeObjectURL(url); } catch { /* noop */ }
             }
             state.pendingPreviewUrls = [];
+            state.pendingImages = [];
             state.pendingFiles = [];
         }
 
         function activeExistingImages() {
-            return state.existingImages.filter((image) => !state.removedImageIds.has(Number(image.id)));
+            return state.existingImages.filter((image) => !state.removedAttachmentIds.has(Number(image.id)));
         }
 
-        function updateImageCount() {
-            const count = activeExistingImages().length + state.pendingFiles.length;
-            el.imageCountText.textContent = `${count} / ${MAX_IMAGES}`;
-            el.addImagesBtn.disabled = count >= MAX_IMAGES;
+        function activeExistingFiles() {
+            return state.existingFiles.filter((file) => !state.removedAttachmentIds.has(Number(file.id)));
         }
 
-        function renderImagePreviews() {
+        function formatFileSize(bytes) {
+            const value = Number(bytes) || 0;
+            if (value < 1024) return `${value} B`;
+            if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+            return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        function updateAttachmentCount() {
+            const imageCount = activeExistingImages().length + state.pendingImages.length;
+            const fileCount = activeExistingFiles().length + state.pendingFiles.length;
+            el.imageCountText.textContent = `${imageCount} / ${MAX_IMAGES} 图片 · ${fileCount} / ${MAX_FILES} 文件`;
+            el.addImagesBtn.disabled = imageCount >= MAX_IMAGES;
+            el.addFilesBtn.disabled = fileCount >= MAX_FILES;
+        }
+
+        function fileAttachmentItemHtml({ id, name, meta, action, index }) {
+            const dataAttr = action === 'remove-existing-file'
+                ? `data-id="${Number(id)}"`
+                : `data-index="${Number(index)}"`;
+            return `<div class="file-attachment-item">
+                <span class="file-attachment-icon" aria-hidden="true">${SVG.paperclip}</span>
+                <span class="file-attachment-main">
+                    <span class="file-attachment-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                    <span class="file-attachment-meta">${escapeHtml(meta)}</span>
+                </span>
+                <button class="file-attachment-remove" type="button" data-action="${action}" ${dataAttr} aria-label="移除附件 ${escapeHtml(name)}">${SVG.close}</button>
+            </div>`;
+        }
+
+        function renderAttachmentPreviews() {
             const existing = activeExistingImages();
             const items = [];
             for (const image of existing) {
@@ -10647,7 +11306,7 @@
                     <button class="remove-image" type="button" data-action="remove-existing-image" data-id="${id}" aria-label="移除图片 ${escapeHtml(image.originalName || '')}">${SVG.close}</button>
                 </div>`);
             }
-            state.pendingFiles.forEach((file, index) => {
+            state.pendingImages.forEach((file, index) => {
                 const url = state.pendingPreviewUrls[index];
                 items.push(`<div class="image-preview-item" data-pending-image="${index}">
                     <img src="${escapeHtml(url || '')}" class="is-loaded" alt="${escapeHtml(file.name)}">
@@ -10656,34 +11315,207 @@
             });
             el.todoImagePreviews.innerHTML = items.length
                 ? items.join('')
-                : '<span class="empty-inline">还没有图片。可添加最多 5 张参考图。</span>';
-            updateImageCount();
+                : '<span class="empty-inline">还没有图片。可选择或直接粘贴截图。</span>';
+
+            const fileItems = [];
+            for (const file of activeExistingFiles()) {
+                fileItems.push(fileAttachmentItemHtml({
+                    id: file.id,
+                    name: file.originalName || '附件',
+                    meta: formatFileSize(file.size),
+                    action: 'remove-existing-file'
+                }));
+            }
+            state.pendingFiles.forEach((file, index) => {
+                fileItems.push(fileAttachmentItemHtml({
+                    name: file.name,
+                    meta: `${formatFileSize(file.size)} · 待上传`,
+                    action: 'remove-pending-file',
+                    index
+                }));
+            });
+            el.todoFileList.innerHTML = fileItems.join('');
+
+            updateAttachmentCount();
             if (existing.length) hydrateImages(el.todoImagePreviews);
         }
 
-        function addSelectedImages(files) {
-            const acceptedTypes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/avif']);
+        /** 统一处理图片与其他文件：图片进预览区，其他文件进附件列表 */
+        function addSelectedAttachments(files, { imagesOnly = false } = {}) {
             const messages = [];
-            let count = activeExistingImages().length + state.pendingFiles.length;
+            let imageCount = activeExistingImages().length + state.pendingImages.length;
+            let fileCount = activeExistingFiles().length + state.pendingFiles.length;
+            let addedImages = 0;
+            let addedFiles = 0;
             for (const file of Array.from(files || [])) {
-                if (count >= MAX_IMAGES) {
-                    messages.push(`最多只能添加 ${MAX_IMAGES} 张图片`);
-                    break;
-                }
-                if (!acceptedTypes.has(String(file.type || '').toLowerCase())) {
-                    messages.push(`${file.name} 的格式不受支持`);
+                const type = String(file.type || '').toLowerCase();
+                const isImage = ACCEPTED_IMAGE_TYPES.has(type);
+                if (isImage) {
+                    if (imageCount + addedImages >= MAX_IMAGES) {
+                        messages.push(`最多只能添加 ${MAX_IMAGES} 张图片`);
+                        continue;
+                    }
+                    if (file.size > MAX_IMAGE_BYTES) {
+                        messages.push(`${file.name || '图片'} 超过 8 MB`);
+                        continue;
+                    }
+                    state.pendingImages.push(file);
+                    state.pendingPreviewUrls.push(URL.createObjectURL(file));
+                    addedImages += 1;
                     continue;
                 }
-                if (file.size > MAX_IMAGE_BYTES) {
-                    messages.push(`${file.name} 超过 8 MB`);
+                if (imagesOnly) {
+                    messages.push(`${file.name || '该文件'} 不是支持的图片格式`);
+                    continue;
+                }
+                if (fileCount + addedFiles >= MAX_FILES) {
+                    messages.push(`最多只能添加 ${MAX_FILES} 个文件`);
+                    continue;
+                }
+                if (file.size > MAX_FILE_BYTES) {
+                    messages.push(`${file.name} 超过 32 MB`);
                     continue;
                 }
                 state.pendingFiles.push(file);
-                state.pendingPreviewUrls.push(URL.createObjectURL(file));
-                count += 1;
+                addedFiles += 1;
             }
-            renderImagePreviews();
+            renderAttachmentPreviews();
             for (const message of messages) showToast(message, 'warning');
+            return addedImages + addedFiles;
+        }
+
+        /** 判断当前拖拽内容是否包含文件（用于与卡片拖动区分） */
+        function hasFileDrag(dataTransfer) {
+            return Boolean(dataTransfer)
+                && Array.from(dataTransfer.types || []).includes('Files');
+        }
+
+        function handleAttachmentDragOver(event) {
+            if (!el.todoModal.classList.contains('is-open') || !hasFileDrag(event.dataTransfer)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            el.attachmentDropzone.classList.add('is-dragover');
+        }
+
+        function handleAttachmentDragLeave(event) {
+            if (event.relatedTarget && el.attachmentDropzone.contains(event.relatedTarget)) return;
+            el.attachmentDropzone.classList.remove('is-dragover');
+        }
+
+        function handleAttachmentDrop(event) {
+            if (!el.todoModal.classList.contains('is-open') || !hasFileDrag(event.dataTransfer)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            el.attachmentDropzone.classList.remove('is-dragover');
+            const dropped = event.dataTransfer?.files;
+            if (!dropped || dropped.length === 0) return;
+            const added = addSelectedAttachments(dropped);
+            if (added > 0) showToast(`已添加 ${added} 个附件。`, 'success');
+        }
+
+        /** 拖拽文件到弹窗其他位置时阻止浏览器直接打开文件 */
+        function preventFileDropNavigation(event) {
+            if (!el.todoModal.classList.contains('is-open') || !hasFileDrag(event.dataTransfer)) return;
+            event.preventDefault();
+        }
+
+        /** 从剪贴板粘贴截图：只接收图片，文本粘贴不受影响 */
+        function handleAttachmentPaste(event) {
+            if (!el.todoModal.classList.contains('is-open')) return;
+            const clipboard = event.clipboardData;
+            if (!clipboard) return;
+            const pasted = [];
+            for (const item of Array.from(clipboard.items || [])) {
+                if (item.kind !== 'file') continue;
+                const file = item.getAsFile();
+                if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) continue;
+                const now = new Date();
+                const subtype = String(file.type || 'image/png').split('/')[1] || 'png';
+                const extension = subtype === 'jpeg' ? 'jpg' : subtype.replace(/[^a-z0-9]/gi, '') || 'png';
+                const name = `pasted-${formatLocalDate(now)}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}.${extension}`;
+                pasted.push(new File([file], name, { type: file.type || 'image/png' }));
+            }
+            if (pasted.length === 0) return;
+            event.preventDefault();
+            const added = addSelectedAttachments(pasted, { imagesOnly: true });
+            if (added > 0) showToast(`已从剪贴板添加 ${added} 张图片。`, 'success');
+        }
+
+        /** 交给运行后端的机器用系统默认程序打开（浏览器无法直接调用本地程序） */
+        async function openAttachmentWithSystem(attachment) {
+            if (!attachment) return;
+            try {
+                const response = await apiFetch(`/todo-attachments/${Number(attachment.id)}/open`);
+                if (response && response.res === false) {
+                    throw new ApiError(response.message || '打开失败');
+                }
+                showToast('已交给系统默认程序打开。', 'success');
+            } catch (error) {
+                if (error.status === 401) return;
+                showToast(humanizeError(error.message, '无法用系统默认程序打开'), 'error');
+            }
+        }
+
+        /** 非本机访问：在浏览器新标签页预览 PDF / 文本 / 音视频 */
+        async function openAttachmentInBrowser(attachment) {
+            if (!attachment) return;
+            // 先同步打开空白页，避免 await 之后被浏览器当作弹窗拦截
+            const previewWindow = window.open('', '_blank');
+            try {
+                const response = await fetch(attachment.url, {
+                    headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+                });
+                if (response.status === 401) {
+                    previewWindow?.close();
+                    handleAuthExpired();
+                    return;
+                }
+                if (!response.ok) throw new ApiError('附件读取失败');
+                const raw = await response.blob();
+                // 服务端对非图片统一返回 octet-stream，这里按白名单 MIME 重新封装以便浏览器内预览
+                const mime = String(attachment.mimeType || '').toLowerCase();
+                const blob = new Blob([raw], {
+                    type: BROWSER_PREVIEWABLE_TYPES.has(mime) ? mime : 'text/plain'
+                });
+                const objectUrl = URL.createObjectURL(blob);
+                if (previewWindow && !previewWindow.closed) {
+                    previewWindow.location.href = objectUrl;
+                } else {
+                    window.open(objectUrl, '_blank');
+                    showToast('若浏览器拦截了新窗口，请使用下载按钮。', 'warning');
+                }
+                window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+            } catch (error) {
+                previewWindow?.close();
+                if (error.status === 401) return;
+                showToast(humanizeError(error.message, '无法在浏览器中预览'), 'error');
+            }
+        }
+
+        /** 其他文件走带 Token 的下载请求，避免直接暴露存储路径 */
+        async function downloadAttachment(attachment) {
+            if (!attachment) return;
+            try {
+                const response = await fetch(attachment.url, {
+                    headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+                });
+                if (response.status === 401) {
+                    handleAuthExpired();
+                    return;
+                }
+                if (!response.ok) throw new ApiError('附件下载失败');
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = objectUrl;
+                link.download = attachment.originalName || 'attachment';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+            } catch (error) {
+                showToast(humanizeError(error.message, '附件下载失败'), 'error');
+            }
         }
 
         function openTodoModal(todo = null, presetCategoryId = null) {
@@ -10699,9 +11531,21 @@
                 : (fallbackCategory === 'inbox' ? '' : fallbackCategory);
             state.editingTodo = todo;
             state.savingTodo = false;
-            state.removedImageIds = new Set();
-            state.existingImages = Array.isArray(todo?.images) ? todo.images.map((image) => ({ ...image })) : [];
-            cleanupPendingImages();
+            state.removedAttachmentIds = new Set();
+            // attachments 包含图片与其他文件；旧数据只有 images 字段时按图片兼容
+            const attachments = Array.isArray(todo?.attachments)
+                ? todo.attachments.map((item) => ({ ...item }))
+                : (Array.isArray(todo?.images) ? todo.images.map((image) => ({ ...image, kind: 'image' })) : []);
+            state.existingImages = attachments.filter((item) => item.kind !== 'file');
+            state.existingFiles = attachments.filter((item) => item.kind === 'file');
+            // 共享任务只能在同一所有者内编辑，分类与标签选择器按所有者过滤
+            const presetCategory = isCategoryFolderId(presetCategoryId)
+                ? state.categories.find((category) => String(category.id) === String(presetCategoryId))
+                : null;
+            state.todoFormOwnerId = todo
+                ? Number(todo.ownerId ?? state.user.id)
+                : Number(presetCategory?.ownerId ?? state.user.id);
+            cleanupPendingAttachments();
             el.todoForm.reset();
             el.todoFormError.classList.add('hidden');
             el.todoFormError.textContent = '';
@@ -10712,9 +11556,12 @@
 
             el.todoTitle.value = todo?.title || '';
             el.todoDescription.value = todo?.description || '';
-            el.todoCategory.innerHTML = categorySelectOptionsHtml(initialCategory);
+            el.todoCategory.innerHTML = categorySelectOptionsHtml(initialCategory, {
+                ownerId: state.todoFormOwnerId,
+                writableOnly: true
+            });
             const tagIds = Array.isArray(todo?.tags) ? todo.tags.map((tag) => Number(tag.id)) : [];
-            renderTodoTagPicker(tagIds);
+            renderTodoTagPicker(tagIds, state.todoFormOwnerId);
 
             const priority = todo?.priority || 'normal';
             const priorityInput = document.querySelector(`input[name="todoPriority"][value="${priority}"]`);
@@ -10742,7 +11589,7 @@
             }
 
             updateTodoScheduleUI();
-            renderImagePreviews();
+            renderAttachmentPreviews();
             openLayer(el.todoModal);
             window.setTimeout(() => el.todoTitle.focus(), 80);
             const body = el.todoModal.querySelector('.modal-body');
@@ -10752,10 +11599,12 @@
         function closeTodoModal(force = false) {
             if (state.savingTodo && !force) return;
             if (datePickerState) closeDatePicker();
-            cleanupPendingImages();
+            cleanupPendingAttachments();
             state.editingTodo = null;
             state.existingImages = [];
-            state.removedImageIds = new Set();
+            state.existingFiles = [];
+            state.removedAttachmentIds = new Set();
+            el.attachmentDropzone?.classList.remove('is-dragover');
             state.savingTodo = false;
             el.todoFormError.classList.add('hidden');
             el.todoSubmitBtn.disabled = false;
@@ -10863,24 +11712,25 @@
                 const todoId = Number(savedTodo.id);
                 const warnings = [];
 
-                for (const imageId of state.removedImageIds) {
+                for (const attachmentId of state.removedAttachmentIds) {
                     try {
-                        await apiFetch(`/todos/${todoId}/images/${imageId}`, { method: 'DELETE' });
-                        invalidateImage(imageId);
+                        await apiFetch(`/todos/${todoId}/attachments/${attachmentId}`, { method: 'DELETE' });
+                        invalidateImage(attachmentId);
                     } catch (error) {
                         if (error.status === 401) throw error;
-                        warnings.push(`图片移除失败：${humanizeError(error.message)}`);
+                        warnings.push(`附件移除失败：${humanizeError(error.message)}`);
                     }
                 }
 
-                if (state.pendingFiles.length > 0) {
+                if (state.pendingImages.length > 0 || state.pendingFiles.length > 0) {
                     try {
                         const formData = new FormData();
-                        for (const file of state.pendingFiles) formData.append('images', file, file.name);
-                        await apiFetch(`/todos/${todoId}/images`, { method: 'POST', body: formData });
+                        for (const file of state.pendingImages) formData.append('images', file, file.name || 'image');
+                        for (const file of state.pendingFiles) formData.append('files', file, file.name || 'attachment');
+                        await apiFetch(`/todos/${todoId}/attachments`, { method: 'POST', body: formData });
                     } catch (error) {
                         if (error.status === 401) throw error;
-                        warnings.push(`图片上传失败：${humanizeError(error.message)}`);
+                        warnings.push(`附件上传失败：${humanizeError(error.message)}`);
                     }
                 }
 
@@ -10944,7 +11794,11 @@
             renderTodos();
             try {
                 if (todo.isCompleted) {
-                    const response = await apiFetch(`/todos/${id}/complete?date=${encodeURIComponent(state.selectedDate)}`, { method: 'DELETE' });
+                    // 单次任务只有一条完成记录，取消时不带日期，避免跨日期取消失效
+                    const url = todo.scheduleType === 'once'
+                        ? `/todos/${id}/complete`
+                        : `/todos/${id}/complete?date=${encodeURIComponent(state.selectedDate)}`;
+                    const response = await apiFetch(url, { method: 'DELETE' });
                     const index = state.todos.findIndex((item) => Number(item.id) === id);
                     if (index >= 0 && response?.todo) state.todos[index] = response.todo;
                     showToast('已恢复为待完成。', 'success');
@@ -11006,13 +11860,21 @@
         function renderFolderPickerList() {
             const todo = state.folderPickerTodo;
             if (!todo) return;
+            const ownId = Number(state.user?.id || 0);
+            const ownerId = Number(todo.ownerId ?? ownId);
+            const sharedTask = Boolean(todo.shared) || ownerId !== ownId;
+            const inboxLabel = sharedTask ? `${todo.ownerUsername || '共享用户'} 的收件箱` : '收件箱';
             const currentCategoryId = todo.categoryId === null || todo.categoryId === undefined ? 'inbox' : String(Number(todo.categoryId));
             const items = [
                 `<button class="folder-picker-item${currentCategoryId === 'inbox' ? ' is-current' : ''}" type="button" data-picker-folder="inbox"${currentCategoryId === 'inbox' ? ' disabled' : ''}>
-                    ${SVG.inbox}<span>收件箱</span><span class="folder-picker-path">未归入文件夹</span>${currentCategoryId === 'inbox' ? '<span class="folder-picker-current">当前</span>' : ''}
+                    ${SVG.inbox}<span>${escapeHtml(inboxLabel)}</span><span class="folder-picker-path">未归入文件夹</span>${currentCategoryId === 'inbox' ? '<span class="folder-picker-current">当前</span>' : ''}
                 </button>`
             ];
             for (const { category, depth, path } of state.categoryTree) {
+                // 只能移动到同一所有者的可写文件夹，避免改变任务归属
+                if (Number(category.ownerId ?? ownId) !== ownerId) continue;
+                if (!sharedTask && category.shared) continue;
+                if (category.shared && category.permission === 'readonly') continue;
                 const id = String(Number(category.id));
                 const current = currentCategoryId === id;
                 items.push(`<button class="folder-picker-item${current ? ' is-current' : ''}" type="button" data-picker-folder="${id}" style="--picker-depth:${Math.min(depth, 6) * 14}px"${current ? ' disabled' : ''}>
@@ -11096,26 +11958,33 @@
                 const copied = response?.todo;
                 if (!copied?.id) throw new ApiError('复制失败：服务未返回新卡片');
                 const warnings = [];
-                const sourceImages = Array.isArray(todo.images) ? todo.images.slice(0, MAX_IMAGES) : [];
-                if (sourceImages.length > 0) {
+                // 复制任务时连同图片与其他附件一起复制，文件不做预览也不影响复制
+                const sourceAttachments = Array.isArray(todo.attachments)
+                    ? todo.attachments
+                    : (Array.isArray(todo.images) ? todo.images.map((image) => ({ ...image, kind: 'image' })) : []);
+                if (sourceAttachments.length > 0) {
                     try {
                         const formData = new FormData();
-                        for (const image of sourceImages) {
-                            const imageResponse = await fetch(image.url, {
+                        for (const attachment of sourceAttachments) {
+                            const attachmentResponse = await fetch(attachment.url, {
                                 headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
                             });
-                            if (imageResponse.status === 401) {
+                            if (attachmentResponse.status === 401) {
                                 handleAuthExpired();
                                 throw new ApiError('登录已失效', 401);
                             }
-                            if (!imageResponse.ok) throw new ApiError(`图片 ${image.originalName || ''} 读取失败`);
-                            const blob = await imageResponse.blob();
-                            formData.append('images', blob, image.originalName || 'copy-image');
+                            if (!attachmentResponse.ok) throw new ApiError(`附件 ${attachment.originalName || ''} 读取失败`);
+                            const blob = await attachmentResponse.blob();
+                            formData.append(
+                                attachment.kind === 'file' ? 'files' : 'images',
+                                blob,
+                                attachment.originalName || 'attachment'
+                            );
                         }
-                        await apiFetch(`/todos/${copied.id}/images`, { method: 'POST', body: formData });
+                        await apiFetch(`/todos/${copied.id}/attachments`, { method: 'POST', body: formData });
                     } catch (error) {
                         if (error.status === 401) throw error;
-                        warnings.push(`图片复制失败：${humanizeError(error.message)}`);
+                        warnings.push(`附件复制失败：${humanizeError(error.message)}`);
                     }
                 }
 
@@ -11543,6 +12412,7 @@
                 const now = new Date();
                 state.selectedDate = formatLocalDate(now);
                 state.onlySelectedDate = true;
+                writeStorage('gitstatus_todo_day_only', '1');
                 state.calendarYear = now.getFullYear();
                 state.calendarMonth = now.getMonth();
             }
@@ -11613,6 +12483,11 @@
                     return;
                 }
                 if (action === 'folder') {
+                    const node = state.categoryTree.find(({ category }) => String(category.id) === String(folderId));
+                    if (node?.category?.shared) {
+                        showToast('共享文件夹中不能创建子文件夹', 'error');
+                        return;
+                    }
                     state.collapsedFolders.delete(folderId);
                     state.inlineFolderParent = folderId;
                     renderFolderTree();
@@ -12140,6 +13015,31 @@
                 const image = button.querySelector('img');
                 if (image?.src && image.classList.contains('is-loaded')) openLightbox(image.src, image.alt || '任务图片');
             });
+            el.detailFiles.addEventListener('click', (event) => {
+                const openButton = event.target.closest('[data-detail-file-open]');
+                const downloadButton = event.target.closest('[data-detail-file-download]');
+                const trigger = openButton || downloadButton;
+                if (!trigger) return;
+                const attachmentId = Number(
+                    openButton ? openButton.dataset.detailFileOpen : downloadButton.dataset.detailFileDownload
+                );
+                const attachments = Array.isArray(state.detailTodo?.attachments) ? state.detailTodo.attachments : [];
+                const attachment = attachments.find((item) => Number(item.id) === attachmentId);
+                if (!attachment) return;
+                if (!openButton) {
+                    downloadAttachment(attachment);
+                    return;
+                }
+                const mime = String(attachment.mimeType || '').toLowerCase();
+                if (state.localClient) {
+                    openAttachmentWithSystem(attachment);
+                } else if (BROWSER_PREVIEWABLE_TYPES.has(mime)) {
+                    openAttachmentInBrowser(attachment);
+                } else {
+                    showToast('该文件类型不支持浏览器预览，已开始下载。', 'warning');
+                    downloadAttachment(attachment);
+                }
+            });
 
             el.todoForm.addEventListener('submit', submitTodoForm);
             document.querySelectorAll('input[name="todoSchedule"]').forEach((input) => {
@@ -12147,29 +13047,66 @@
             });
             el.todoReminderEnabled.addEventListener('change', updateTodoReminderUI);
             el.addImagesBtn.addEventListener('click', () => {
-                if (activeExistingImages().length + state.pendingFiles.length >= MAX_IMAGES) {
+                if (activeExistingImages().length + state.pendingImages.length >= MAX_IMAGES) {
                     showToast(`每个任务最多 ${MAX_IMAGES} 张图片。`, 'warning');
                     return;
                 }
                 el.todoImagesInput.click();
             });
+            el.addFilesBtn.addEventListener('click', () => {
+                if (activeExistingFiles().length + state.pendingFiles.length >= MAX_FILES) {
+                    showToast(`每个任务最多 ${MAX_FILES} 个文件。`, 'warning');
+                    return;
+                }
+                el.todoFilesInput.click();
+            });
             el.todoImagesInput.addEventListener('change', () => {
-                addSelectedImages(el.todoImagesInput.files);
+                addSelectedAttachments(el.todoImagesInput.files, { imagesOnly: true });
                 el.todoImagesInput.value = '';
             });
+            el.todoFilesInput.addEventListener('change', () => {
+                addSelectedAttachments(el.todoFilesInput.files);
+                el.todoFilesInput.value = '';
+            });
+            document.addEventListener('paste', handleAttachmentPaste);
+            el.attachmentDropzone.addEventListener('dragover', handleAttachmentDragOver);
+            el.attachmentDropzone.addEventListener('dragleave', handleAttachmentDragLeave);
+            el.attachmentDropzone.addEventListener('drop', handleAttachmentDrop);
+            // 拖到弹窗任意位置都能加入附件，避免必须精确落在投放区
+            el.todoModal.addEventListener('dragover', handleAttachmentDragOver);
+            el.todoModal.addEventListener('drop', handleAttachmentDrop);
+            el.todoModal.addEventListener('dragleave', (event) => {
+                if (!el.todoModal.contains(event.relatedTarget)) el.attachmentDropzone.classList.remove('is-dragover');
+            });
+            document.addEventListener('dragover', preventFileDropNavigation);
+            document.addEventListener('drop', preventFileDropNavigation);
             el.todoImagePreviews.addEventListener('click', (event) => {
                 const button = event.target.closest('[data-action]');
                 if (!button) return;
                 if (button.dataset.action === 'remove-existing-image') {
-                    state.removedImageIds.add(Number(button.dataset.id));
-                    renderImagePreviews();
+                    state.removedAttachmentIds.add(Number(button.dataset.id));
+                    renderAttachmentPreviews();
                 } else if (button.dataset.action === 'remove-pending-image') {
                     const index = Number(button.dataset.index);
-                    if (index >= 0 && index < state.pendingFiles.length) {
+                    if (index >= 0 && index < state.pendingImages.length) {
                         const [url] = state.pendingPreviewUrls.splice(index, 1);
-                        state.pendingFiles.splice(index, 1);
+                        state.pendingImages.splice(index, 1);
                         if (url) URL.revokeObjectURL(url);
-                        renderImagePreviews();
+                        renderAttachmentPreviews();
+                    }
+                }
+            });
+            el.todoFileList.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-action]');
+                if (!button) return;
+                if (button.dataset.action === 'remove-existing-file') {
+                    state.removedAttachmentIds.add(Number(button.dataset.id));
+                    renderAttachmentPreviews();
+                } else if (button.dataset.action === 'remove-pending-file') {
+                    const index = Number(button.dataset.index);
+                    if (index >= 0 && index < state.pendingFiles.length) {
+                        state.pendingFiles.splice(index, 1);
+                        renderAttachmentPreviews();
                     }
                 }
             });
@@ -12180,6 +13117,28 @@
             el.imageLightbox.addEventListener('click', (event) => {
                 if (event.target === el.imageLightbox) closeLightbox();
             });
+            el.lightboxZoomInBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                zoomLightboxAt(lightboxView.scale * 1.4);
+            });
+            el.lightboxZoomOutBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                zoomLightboxAt(lightboxView.scale / 1.4);
+            });
+            el.lightboxResetBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                resetLightboxView();
+            });
+            el.imageLightbox.addEventListener('wheel', handleLightboxWheel, { passive: false });
+            el.lightboxImage.addEventListener('pointerdown', handleLightboxPointerDown);
+            el.lightboxImage.addEventListener('pointermove', handleLightboxPointerMove);
+            el.lightboxImage.addEventListener('pointerup', endLightboxPointer);
+            el.lightboxImage.addEventListener('pointercancel', endLightboxPointer);
+            el.lightboxImage.addEventListener('dblclick', (event) => {
+                event.preventDefault();
+                if (lightboxView.scale > 1.01) resetLightboxView();
+                else zoomLightboxAt(2, event.clientX, event.clientY);
+            });
         }
 
         // ================================================================
@@ -12187,7 +13146,8 @@
         // ================================================================
         async function initializeApp() {
             state.ready = false;
-            resetFilterState();
+            // 保留日期视图状态（含“只显示当天”），避免刷新或重新登录时被重置
+            resetFilterState({ keepDate: true });
             applySidebarState();
             applyStatsStyle();
             renderFilterOptions();
@@ -12200,6 +13160,23 @@
                 renderGridError(error);
                 showToast(humanizeError(error.message, '初始化失败'), 'error');
             }
+            openAddTodoFromUrl();
+        }
+
+        // 桌宠的“+”按钮通过 ?add=1 直达新建待办弹窗
+        function consumeAddTodoRequest() {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get('add') !== '1') return false;
+            url.searchParams.delete('add');
+            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+            return true;
+        }
+
+        function openAddTodoFromUrl() {
+            if (!state.token || !state.user) return;
+            if (!consumeAddTodoRequest()) return;
+            // 等当前页面完成首帧布局后再弹窗，避免标题输入框焦点被抢
+            window.setTimeout(() => openTodoModal(), 80);
         }
 
         async function boot() {
@@ -12222,6 +13199,8 @@
                 const payload = await apiFetch('/auth/me', { skipAuthHandler: true });
                 state.user = normalizeUser(payload?.user);
                 if (!state.user) throw new ApiError('登录信息无效', 401);
+                // 以服务端判断为准：远程设备与后端不在同一台机器
+                if (typeof payload?.local === 'boolean') state.localClient = payload.local;
                 persistAuth();
                 syncUserUI();
                 await initializeApp();
@@ -12236,11 +13215,14 @@
 
         window.addEventListener('beforeunload', () => {
             clearImageCache();
-            cleanupPendingImages();
+            cleanupPendingAttachments();
         });
 
         boot();
     </script>
+    <script>window.GITSTATUS_PET_PAGE = "todo";</script>
+    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script src="/pages/assets/js/pet-preference.js"></script>
 </body>
 
 </html>
