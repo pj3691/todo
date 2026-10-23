@@ -41,6 +41,7 @@
         reloadBtn: document.getElementById("reloadBtn"),
         createUserBtn: document.getElementById("createUserBtn"),
         totalCount: document.getElementById("totalCount"),
+        pendingCount: document.getElementById("pendingCount"),
         userTableBody: document.getElementById("userTableBody"),
         listEmpty: document.getElementById("listEmpty"),
         pageInfo: document.getElementById("pageInfo"),
@@ -130,7 +131,9 @@
     function statusBadge(status) {
         const span = document.createElement("span");
         span.className = "badge";
-        span.classList.add(status === "disabled" ? "badge-danger" : "badge-success");
+        if (status === "pending") span.classList.add("badge-warning");
+        else if (status === "disabled") span.classList.add("badge-danger");
+        else span.classList.add("badge-success");
         span.textContent = Auth.statusLabel(status);
         return span;
     }
@@ -171,33 +174,54 @@
             const actions = document.createElement("div");
             actions.className = "row-actions";
 
-            const editBtn = document.createElement("button");
-            editBtn.type = "button";
-            editBtn.className = "btn btn-sm";
-            editBtn.textContent = "编辑";
-            editBtn.dataset.action = "edit";
-            editBtn.dataset.id = String(user.id);
+            if (user.status === "pending") {
+                // 待审核账号只提供通过 / 拒绝，拒绝即删除该用户数据
+                const approveBtn = document.createElement("button");
+                approveBtn.type = "button";
+                approveBtn.className = "btn btn-sm btn-primary";
+                approveBtn.textContent = "通过";
+                approveBtn.title = "通过审核，允许该用户登录";
+                approveBtn.dataset.action = "approve";
+                approveBtn.dataset.id = String(user.id);
 
-            const transferBtn = document.createElement("button");
-            transferBtn.type = "button";
-            transferBtn.className = "btn btn-sm";
-            transferBtn.textContent = "迁移";
-            transferBtn.title = "把该用户的待办数据迁移给其他用户";
-            transferBtn.dataset.action = "transfer";
-            transferBtn.dataset.id = String(user.id);
+                const rejectBtn = document.createElement("button");
+                rejectBtn.type = "button";
+                rejectBtn.className = "btn btn-sm btn-danger";
+                rejectBtn.textContent = "拒绝";
+                rejectBtn.title = "拒绝注册并删除该用户数据";
+                rejectBtn.dataset.action = "reject";
+                rejectBtn.dataset.id = String(user.id);
 
-            const deleteBtn = document.createElement("button");
-            deleteBtn.type = "button";
-            deleteBtn.className = "btn btn-sm btn-danger";
-            deleteBtn.textContent = "删除";
-            deleteBtn.dataset.action = "delete";
-            deleteBtn.dataset.id = String(user.id);
-            if (state.user && user.id === state.user.id) {
-                deleteBtn.disabled = true;
-                deleteBtn.title = "不能删除当前登录账号";
+                actions.append(approveBtn, rejectBtn);
+            } else {
+                const editBtn = document.createElement("button");
+                editBtn.type = "button";
+                editBtn.className = "btn btn-sm";
+                editBtn.textContent = "编辑";
+                editBtn.dataset.action = "edit";
+                editBtn.dataset.id = String(user.id);
+
+                const transferBtn = document.createElement("button");
+                transferBtn.type = "button";
+                transferBtn.className = "btn btn-sm";
+                transferBtn.textContent = "迁移";
+                transferBtn.title = "把该用户的待办数据迁移给其他用户";
+                transferBtn.dataset.action = "transfer";
+                transferBtn.dataset.id = String(user.id);
+
+                const deleteBtn = document.createElement("button");
+                deleteBtn.type = "button";
+                deleteBtn.className = "btn btn-sm btn-danger";
+                deleteBtn.textContent = "删除";
+                deleteBtn.dataset.action = "delete";
+                deleteBtn.dataset.id = String(user.id);
+                if (state.user && user.id === state.user.id) {
+                    deleteBtn.disabled = true;
+                    deleteBtn.title = "不能删除当前登录账号";
+                }
+
+                actions.append(editBtn, transferBtn, deleteBtn);
             }
-
-            actions.append(editBtn, transferBtn, deleteBtn);
             actionCell.appendChild(actions);
 
             tr.append(idCell, nameCell, roleCell, statusCell, createdCell, loginCell, actionCell);
@@ -253,6 +277,7 @@
             }
             state.users = Array.isArray(json.users) ? json.users : [];
             state.total = Number(json.total) || 0;
+            if (el.pendingCount) el.pendingCount.textContent = String(Number(json.pendingCount) || 0);
             renderTable();
             renderPagination();
         } catch (error) {
@@ -411,6 +436,49 @@
         }
     }
 
+    async function approveUser(user) {
+        const confirmed = window.confirm(
+            `通过用户「${user.username}」的注册申请？通过后该账号即可登录。`,
+        );
+        if (!confirmed) return;
+        try {
+            const res = await Auth.apiFetch(`/users/${user.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "active" }),
+            });
+            const json = await Auth.parseJson(res);
+            if (!res.ok || !json.res) {
+                showToast(json.message || `审核失败（${res.status}）`, "error");
+                return;
+            }
+            await loadUsers();
+            showToast("已通过审核，该账号现在可以登录", "success");
+        } catch (error) {
+            handleAuthError(error);
+        }
+    }
+
+    async function rejectUser(user) {
+        const confirmed = window.confirm(
+            `拒绝用户「${user.username}」的注册申请？拒绝后该用户数据会被删除，且无法登录。`,
+        );
+        if (!confirmed) return;
+        try {
+            const res = await Auth.apiFetch(`/users/${user.id}`, { method: "DELETE" });
+            const json = await Auth.parseJson(res);
+            if (!res.ok || !json.res) {
+                showToast(json.message || `拒绝失败（${res.status}）`, "error");
+                return;
+            }
+            if (state.users.length === 1 && state.page > 1) state.page -= 1;
+            await loadUsers();
+            showToast("已拒绝并删除该账号", "success");
+        } catch (error) {
+            handleAuthError(error);
+        }
+    }
+
     function showTransferError(message) {
         el.transferError.textContent = message;
         el.transferError.classList.remove("hidden");
@@ -503,7 +571,7 @@
             closeTransferModal();
             await loadUsers();
             showToast(
-                `迁移完成：${stats.todos || 0} 个待办、${stats.categories || 0} 个分类、${stats.tags || 0} 个标签、${stats.images || 0} 张图片`,
+                `迁移完成：${stats.todos || 0} 个待办、${stats.categories || 0} 个分类、${stats.tags || 0} 个标签、${stats.attachments || 0} 个附件`,
                 "success",
             );
         } catch (error) {
@@ -544,6 +612,8 @@
             if (button.dataset.action === "edit") openEditModal(user);
             else if (button.dataset.action === "transfer") openTransferModal(user);
             else if (button.dataset.action === "delete") deleteUser(user);
+            else if (button.dataset.action === "approve") approveUser(user);
+            else if (button.dataset.action === "reject") rejectUser(user);
         });
 
         el.userForm.addEventListener("submit", submitUserForm);

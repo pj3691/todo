@@ -9,7 +9,7 @@
     const TOKEN_KEY = "gitstatus_todo_token";
     const USER_KEY = "gitstatus_todo_user";
     const ROLE_LABELS = { admin: "管理员", readwrite: "读写", readonly: "只读" };
-    const STATUS_LABELS = { active: "已启用", disabled: "已禁用" };
+    const STATUS_LABELS = { active: "已启用", disabled: "已禁用", pending: "待审核" };
     const ROLE_LEVEL = { readonly: 1, readwrite: 2, admin: 3 };
 
     function readStorage(key) {

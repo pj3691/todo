@@ -8,6 +8,7 @@
     <!-- 共享主题与组件样式（本地文件，零网络依赖） -->
     <link rel="stylesheet" href="/pages/assets/styles/theme.css">
     <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
     <!-- 图表库：本地 vendor，避免 CDN 依赖 -->
     <script src="/pages/assets/vendor/chart.umd.js"></script>
     <script src="/pages/assets/vendor/chartjs-plugin-zoom.min.js"></script>
@@ -650,6 +651,7 @@
             <nav class="top-nav" aria-label="主导航">
                 <a class="active" href="/pages/index.html" aria-current="page">Git 洞察</a>
                 <a href="/pages/todo.html">待办清单</a>
+                <a href="/pages/shares.html">数据共享</a>
                 <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
             </nav>
 
@@ -666,6 +668,13 @@
                         <div class="user-popover-meta">
                             <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
                             <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                                                        <div class="user-popover-meta-row">
+                                                            <span>待办页桌宠</span>
+                                                            <label class="switch" title="显示或隐藏待办页桌宠">
+                                                                <input type="checkbox" data-todo-pet-toggle>
+                                                                <span></span>
+                                                            </label>
+                                                        </div>
                         </div>
                         <div class="user-popover-actions">
                             <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
@@ -962,6 +971,10 @@
                 return false;
             }
         }
+        const AUTH_ERROR_MESSAGES = {
+            'account pending approval; please wait for an administrator to review it': '账号正在等待管理员审核，暂时无法登录',
+            'account is disabled': '账号已被禁用，请联系管理员'
+        };
         function setupAuthUi() {
             const form = document.getElementById('loginForm');
             const logoutBtn = document.getElementById('logoutBtn');
@@ -985,7 +998,7 @@
                         });
                         const json = await res.json().catch(() => ({}));
                         if (!res.ok || !json.res) {
-                            if (error) error.textContent = json.message || `登录失败（${res.status}）`;
+                            if (error) error.textContent = AUTH_ERROR_MESSAGES[json.message] || json.message || `登录失败（${res.status}）`;
                             return;
                         }
                         authToken = json.token;
@@ -1856,6 +1869,8 @@
             }
         })();
     </script>
+    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script src="/pages/assets/js/pet-preference.js"></script>
 </body>
 
 </html>

@@ -8,6 +8,7 @@
     <title>账号管理 · GitStatus</title>
     <link rel="stylesheet" href="/pages/assets/styles/theme.css">
     <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
     <style>
         /* 与顶栏使用同一贴边间距，避免内容与 header 错位 */
         main.page {
@@ -129,6 +130,7 @@
             <nav class="top-nav" aria-label="主导航">
                 <a href="/pages/index.html">Git 洞察</a>
                 <a href="/pages/todo.html">待办清单</a>
+                <a href="/pages/shares.html">数据共享</a>
                 <a class="active hidden" id="navAccountLink" href="/pages/account.html" aria-current="page">账号管理</a>
             </nav>
 
@@ -145,6 +147,13 @@
                         <div class="user-popover-meta">
                             <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
                             <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                                                        <div class="user-popover-meta-row">
+                                                            <span>待办页桌宠</span>
+                                                            <label class="switch" title="显示或隐藏待办页桌宠">
+                                                                <input type="checkbox" data-todo-pet-toggle>
+                                                                <span></span>
+                                                            </label>
+                                                        </div>
                         </div>
                         <div class="user-popover-actions">
                             <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
@@ -162,7 +171,7 @@
             <div>
                 <span class="modal-kicker">Administration</span>
                 <h1>账号管理</h1>
-                <p>管理所有用户、分配角色、启用或禁用账号</p>
+                <p>管理所有用户、审核新注册申请、分配角色、启用或禁用账号</p>
             </div>
             <div class="toolbar">
                 <input class="text-input" id="searchInput" type="search" placeholder="搜索用户名" autocomplete="off" />
@@ -174,6 +183,7 @@
                 </select>
                 <select class="control" id="statusFilter" aria-label="状态筛选">
                     <option value="">全部状态</option>
+                    <option value="pending">待审核</option>
                     <option value="active">已启用</option>
                     <option value="disabled">已禁用</option>
                 </select>
@@ -194,7 +204,7 @@
         <div class="card hidden" id="pageBody">
             <div class="card-header">
                 <h2>用户列表</h2>
-                <span class="result-count">共 <strong id="totalCount">0</strong> 个用户</span>
+                <span class="result-count">待审核 <strong id="pendingCount">0</strong> · 共 <strong id="totalCount">0</strong> 个用户</span>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -308,6 +318,8 @@
 
     <script src="/pages/assets/js/auth-client.js"></script>
     <script src="/pages/assets/js/account.js"></script>
+    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script src="/pages/assets/js/pet-preference.js"></script>
 </body>
 
 </html>

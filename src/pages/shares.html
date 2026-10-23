@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>数据共享 · GitStatus</title>
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
+    <style>
+        /* 与顶栏使用同一贴边间距，避免内容与 header 错位 */
+        main.page {
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            padding: 12px 14px 40px;
+        }
+
+        @media (max-width: 1020px) {
+            main.page {
+                padding: 9px 10px 32px;
+            }
+        }
+
+        .page-head {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .page-head h1 {
+            margin-top: 3px;
+            font-size: 1.7rem;
+            font-weight: 760;
+            letter-spacing: -0.04em;
+        }
+
+        .page-head p {
+            margin-top: 5px;
+            color: var(--muted);
+            font-size: 0.84rem;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .result-count {
+            color: var(--muted);
+            font-size: 0.76rem;
+        }
+
+        .result-count strong {
+            color: var(--text);
+            font-weight: 760;
+        }
+
+        .share-tabs {
+            display: inline-flex;
+            gap: 4px;
+            padding: 4px;
+            margin-bottom: 14px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: var(--surface-soft);
+        }
+
+        .share-tab {
+            border: 0;
+            border-radius: 999px;
+            padding: 7px 15px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: 0.16s ease;
+        }
+
+        .share-tab:hover {
+            color: var(--text);
+        }
+
+        .share-tab.active {
+            background: var(--surface);
+            color: var(--green-strong);
+            box-shadow: var(--shadow-xs);
+        }
+
+        .row-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .row-actions .select-input {
+            height: 32px;
+            min-width: 96px;
+            font-size: 0.74rem;
+        }
+
+        .scope-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .scope-name {
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .scope-type {
+            color: var(--muted);
+            font-size: 0.7rem;
+        }
+
+        .table-empty {
+            padding: 34px 16px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        .auth-panel {
+            max-width: 420px;
+            margin: 40px auto;
+            padding: 26px 24px;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .auth-panel h1 {
+            margin-top: 4px;
+            font-size: 1.35rem;
+        }
+
+        .auth-panel p {
+            margin: 6px 0 18px;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+
+        .auth-panel .btn {
+            width: 100%;
+            margin-top: 14px;
+        }
+
+        .share-permission-hint {
+            color: var(--muted);
+            font-size: 0.72rem;
+        }
+
+        .toast-icon svg {
+            width: 12px;
+            height: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="/pages/index.html" aria-label="GitStatus 首页">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 3v18h18"></path>
+                        <polyline points="7 14 11 10 15 13 21 6"></polyline>
+                    </svg>
+                </span>
+                <span class="brand-copy">
+                    <strong>GitStatus</strong>
+                    <small>Code Insights</small>
+                </span>
+            </a>
+
+            <nav class="top-nav" aria-label="主导航">
+                <a href="/pages/index.html">Git 洞察</a>
+                <a href="/pages/todo.html">待办清单</a>
+                <a class="active" href="/pages/shares.html" aria-current="page">数据共享</a>
+                <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
+            </nav>
+
+            <div class="topbar-actions">
+                <div class="user-menu" id="userMenu">
+                    <button class="user-trigger" id="userTrigger" type="button" aria-haspopup="true" aria-expanded="false" title="账号信息">
+                        <span class="avatar" id="userAvatar" aria-hidden="true">?</span>
+                    </button>
+                    <div class="user-popover" role="dialog" aria-label="账号信息">
+                        <div class="user-popover-head">
+                            <span class="user-popover-name" id="userName">未登录</span>
+                            <span class="user-popover-role" id="userRole">请先登录</span>
+                        </div>
+                        <div class="user-popover-meta">
+                            <div class="user-popover-meta-row"><span>账号状态</span><strong id="popoverStatus">—</strong></div>
+                            <div class="user-popover-meta-row"><span>最近登录</span><strong id="popoverLastLogin">—</strong></div>
+                                                        <div class="user-popover-meta-row">
+                                                            <span>待办页桌宠</span>
+                                                            <label class="switch" title="显示或隐藏待办页桌宠">
+                                                                <input type="checkbox" data-todo-pet-toggle>
+                                                                <span></span>
+                                                            </label>
+                                                        </div>
+                        </div>
+                        <div class="user-popover-actions">
+                            <a class="btn btn-sm hidden" id="accountManageLink" href="/pages/account.html">账号管理</a>
+                            <button class="btn btn-sm btn-primary hidden" id="userLoginBtn" type="button">登录</button>
+                            <button class="btn btn-sm btn-ghost hidden" id="logoutBtn" type="button">退出</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="page">
+        <div class="auth-panel hidden" id="authPanel">
+            <span class="modal-kicker">Sign In</span>
+            <h1>登录数据共享</h1>
+            <p>使用已有账号登录，管理共享给他人和他人共享给你的待办数据。</p>
+            <form id="loginForm">
+                <div class="field">
+                    <label class="field-label" for="loginUsername">用户名</label>
+                    <input class="text-input" id="loginUsername" type="text" autocomplete="username" placeholder="请输入用户名" required>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="loginPassword">密码</label>
+                    <input class="text-input" id="loginPassword" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+                </div>
+                <div class="form-error hidden" id="loginError"></div>
+                <button class="btn btn-primary" id="loginSubmitBtn" type="submit">登录</button>
+            </form>
+        </div>
+
+        <div class="hidden" id="pageBody">
+            <div class="page-head">
+                <div>
+                    <span class="modal-kicker">Collaboration</span>
+                    <h1>数据共享</h1>
+                    <p>把待办文件夹或收件箱的只读 / 增删改权限共享给其他用户</p>
+                </div>
+                <div class="toolbar">
+                    <button class="btn" id="reloadBtn" type="button">刷新</button>
+                    <button class="btn btn-primary" id="createShareBtn" type="button">新建共享</button>
+                </div>
+            </div>
+
+            <div class="share-tabs" role="tablist" aria-label="共享范围">
+                <button class="share-tab active" type="button" data-scope="received" role="tab" aria-selected="true">共享给我的</button>
+                <button class="share-tab" type="button" data-scope="mine" role="tab" aria-selected="false">我共享出去的</button>
+                <button class="share-tab hidden" type="button" data-scope="all" role="tab" aria-selected="false">全部共享</button>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2 id="listTitle">共享给我的</h2>
+                    <span class="result-count">共 <strong id="totalCount">0</strong> 条</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>数据范围</th>
+                                    <th>所有者</th>
+                                    <th>被共享给</th>
+                                    <th>权限</th>
+                                    <th>更新时间</th>
+                                    <th style="width:240px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="shareTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div class="table-empty hidden" id="listEmpty">暂无共享记录</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="false"></div>
+
+    <div class="modal-layer" id="shareModal" aria-hidden="true">
+        <div class="modal is-narrow" role="dialog" aria-modal="true" aria-labelledby="shareModalTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-kicker">Share</span>
+                    <h2 id="shareModalTitle">新建共享</h2>
+                    <p>选择要共享的数据范围、接收用户与权限</p>
+                </div>
+                <button class="icon-btn" id="closeShareBtn" type="button" aria-label="关闭">✕</button>
+            </div>
+            <form id="shareForm">
+                <div class="modal-body">
+                    <div class="field">
+                        <label class="field-label" for="scopeSelect">数据范围</label>
+                        <select class="select-input" id="scopeSelect" required></select>
+                        <p class="field-hint">文件夹会连同其子文件夹和其中的任务一起共享</p>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="granteeSelect">被共享用户</label>
+                        <select class="select-input" id="granteeSelect" required></select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="permissionSelect">权限</label>
+                        <select class="select-input" id="permissionSelect">
+                            <option value="readonly">只读：可以查看，不能修改</option>
+                            <option value="write">可编辑：可以新增、修改、删除任务</option>
+                        </select>
+                    </div>
+                    <div class="form-error hidden" id="shareError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" type="button" id="cancelShareBtn">取消</button>
+                    <button class="btn btn-primary" type="submit" id="saveShareBtn">创建共享</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/pages/assets/js/auth-client.js"></script>
+    <script src="/pages/assets/js/shares.js"></script>
+    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script src="/pages/assets/js/pet-preference.js"></script>
+</body>
+
+</html>
