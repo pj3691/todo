@@ -8,6 +8,8 @@
   "main": "index.ts",
   "scripts": {
     "dev": "nodemon",
+    "desktop": "npm --prefix desktop start",
+    "desktop:install": "npm --prefix desktop install",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {

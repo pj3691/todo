@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitStatus 桌宠</title>
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent !important;
+        }
+
+        body {
+            -webkit-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        // 桌面版配置：覆盖层覆盖虚拟桌面，初始位置放在当前显示器右下角
+        const initialDisplay = window.desktopInitialDisplay;
+        const initialPosition = initialDisplay
+            ? {
+                  left: initialDisplay.display.x - initialDisplay.virtual.x,
+                  top: initialDisplay.display.y - initialDisplay.virtual.y,
+                  width: initialDisplay.display.width,
+                  height: initialDisplay.display.height
+              }
+            : null;
+        window.GITSTATUS_PET_CONFIG = {
+            desktop: true,
+            initialPosition,
+            onLogin: () => window.desktopApi?.openLogin()
+        };
+    </script>
+    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script>
+        (function () {
+            // 透明区域点击穿透：只有桌宠和气泡区域接收鼠标
+            let interactive = false;
+            function setInteractive(value) {
+                if (value === interactive) return;
+                interactive = value;
+                window.desktopApi?.setInteractive(value);
+            }
+
+            document.addEventListener("mousemove", (event) => {
+                const target = document.elementFromPoint(event.clientX, event.clientY);
+                // 拖动桌宠时强制保持可交互，避免拖到屏幕边缘后命中测试把覆盖层切成穿透
+                const dragging = Boolean(document.querySelector(".pet-widget.is-dragging"));
+                setInteractive(dragging || Boolean(target && target.closest(".pet-widget")));
+            });
+
+            document.addEventListener("mouseout", (event) => {
+                if (!event.relatedTarget) setInteractive(false);
+            });
+
+            // 气泡里的链接统一交给系统浏览器打开，避免把桌宠窗口导航走
+            document.addEventListener(
+                "click",
+                (event) => {
+                    const target = event.target instanceof Element ? event.target : null;
+                    const link = target ? target.closest("a[href]") : null;
+                    if (!link) return;
+                    event.preventDefault();
+                    if (link.hasAttribute("data-pet-add") && window.desktopApi?.openTodoAdd) {
+                        window.desktopApi.openTodoAdd();
+                        return;
+                    }
+                    try {
+                        const url = new URL(link.href, location.href);
+                        if (url.pathname.endsWith("/pages/todo.html") && window.desktopApi?.openTodo) {
+                            window.desktopApi.openTodo();
+                            return;
+                        }
+                    } catch {
+                        /* 非法链接继续走外部打开 */
+                    }
+                    window.desktopApi?.openExternal(link.href);
+                },
+                true
+            );
+
+            // 主进程隐藏 / 显示桌宠时，用小气泡播报
+            window.desktopApi?.onPetEvent?.((type) => {
+                if (type === "before-hide") {
+                    window.GitStatusPet?.showMiniNotice?.("goodbye");
+                    // 给再见气泡留出展示时间，再真正隐藏覆盖层
+                    window.setTimeout(() => window.desktopApi?.hideNow?.(), 1100);
+                } else if (type === "after-show") {
+                    window.GitStatusPet?.showMiniNotice?.("welcome");
+                } else if (type === "display-changed") {
+                    // 显示器切换/菜单跳转：把桌宠放到目标显示器右下角
+                    window.setTimeout(async () => {
+                        try {
+                            const info = await window.desktopApi?.getDisplays?.();
+                            const current = info?.displays?.find(
+                                (display) => display.id === info.currentId
+                            );
+                            const area = current?.workArea;
+                            if (area && Number.isFinite(area.x) && Number.isFinite(area.y)) {
+                                window.GitStatusPet?.resetPosition?.({
+                                    left: area.x - window.screenX,
+                                    top: area.y - window.screenY,
+                                    width: area.width,
+                                    height: area.height
+                                });
+                                return;
+                            }
+                        } catch {
+                            /* 获取显示器失败时回退到当前视口右下角 */
+                        }
+                        window.GitStatusPet?.resetPosition?.();
+                    }, 100);
+                }
+            });
+
+            // 首次启动未登录时直接弹出登录气泡，省得找不到菜单按钮
+            window.addEventListener("load", () => {
+                window.setTimeout(() => {
+                    let hasToken = false;
+                    try {
+                        hasToken = Boolean(localStorage.getItem("gitstatus_todo_token"));
+                    } catch {
+                        /* localStorage 不可用时按未登录处理 */
+                    }
+                    if (!hasToken) window.GitStatusPet?.showSummary();
+                }, 400);
+            });
+        })();
+    </script>
+</body>
+</html>

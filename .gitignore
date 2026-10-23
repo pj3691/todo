@@ -8,5 +8,9 @@ src/pages/dist/
 # 运行时日志
 debug.log
 
+# 桌面版桌宠构建产物
+desktop/dist/
+desktop/out/
+
 # 本地二进制工具（通过 GLTFPACK_BIN 环境变量或系统 PATH 指定）
 src/tools/gltfpack.exe

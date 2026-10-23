@@ -1,0 +1,42 @@
+{
+  "name": "gitstatus-pet-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitStatus 桌宠 Windows 桌面版（Electron）",
+  "license": "ISC",
+  "author": "GitStatus",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.gitstatus.pet",
+    "productName": "GitStatusPet",
+    "files": [
+      "main.js",
+      "preload.js",
+      "offline.html",
+      "config.json",
+      "tray.png"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
