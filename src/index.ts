@@ -13,6 +13,7 @@ import {
   removePetAssetsForUser,
   transferTodoData,
 } from "./todo.js";
+import { registerProjectFeature } from "./projects.js";
 
 type GitCommit = {
   hash: string;
@@ -2151,6 +2152,17 @@ registerTodoFeature(app, {
   logWarn,
   logError,
 });
+
+registerProjectFeature(app, {
+  db,
+  apiPrefix,
+  authMiddleware,
+  requireWrite: requireMinRole("readwrite"),
+  logInfo,
+  logWarn,
+  logError,
+});
+
 const server = app.listen(port, () => {
   logInfo(`server running: http://localhost:${port}`);
 });
