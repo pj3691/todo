@@ -402,6 +402,22 @@
         addBtn.setAttribute("aria-label", "去待办页新建待办");
         addBtn.setAttribute("data-pet-add", "1");
 
+        // 桌面版快捷入口：打开待办列表页（网页版不显示）
+        const todoBtn = state.config.desktop && global.desktopApi?.openTodo
+            ? el("button", "pet-todo-btn")
+            : null;
+        if (todoBtn) {
+            todoBtn.type = "button";
+            todoBtn.title = "打开待办页面";
+            todoBtn.setAttribute("aria-label", "打开待办页面");
+            todoBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"/></svg>';
+            todoBtn.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                global.desktopApi.openTodo();
+            });
+        }
+
         const avatar = el("button", "pet-avatar");
         avatar.type = "button";
         avatar.setAttribute("aria-haspopup", "dialog");
@@ -420,7 +436,9 @@
         flip.append(float);
         avatar.append(badge, zzz, flip);
 
-        root.append(bubble, mini, menuBtn, addBtn, avatar);
+        root.append(bubble, mini, menuBtn, addBtn);
+        if (todoBtn) root.append(todoBtn);
+        root.append(avatar);
         document.body.append(root);
 
         state.root = root;
