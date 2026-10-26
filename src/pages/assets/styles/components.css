@@ -435,6 +435,19 @@
     background: var(--surface-soft);
 }
 
+/* Electron 工具窗口：悬停时不要移动可点击元素，避免指针在边缘反复切换 */
+html.desktop-app .btn:hover,
+html.desktop-app .icon-btn:hover,
+html.desktop-app .todo-check:hover,
+html.desktop-app .todo-card:hover,
+html.desktop-app .project-card:hover,
+html.desktop-app .card:hover,
+html.desktop-app .subfolder-card:hover,
+html.desktop-app .board-new-btn:hover,
+html.desktop-app .folder-section-icon-btn:hover {
+    transform: none;
+}
+
 /* ---------- 徽章 ---------- */
 .badge {
     max-width: 170px;

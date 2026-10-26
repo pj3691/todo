@@ -22,6 +22,10 @@
             -webkit-user-select: none;
             user-select: none;
         }
+
+        body.pet-hidden .pet-widget {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -91,12 +95,29 @@
             );
 
             // 主进程隐藏 / 显示桌宠时，用小气泡播报
+            let hideNoticeTimer = 0;
+            let hideRequested = false;
             window.desktopApi?.onPetEvent?.((type) => {
                 if (type === "before-hide") {
+                    hideRequested = true;
                     window.GitStatusPet?.showMiniNotice?.("goodbye");
-                    // 给再见气泡留出展示时间，再真正隐藏覆盖层
-                    window.setTimeout(() => window.desktopApi?.hideNow?.(), 1100);
+                    // 给再见气泡留出展示时间，再真正隐藏覆盖层；页面侧也兜底清掉桌宠
+                    window.clearTimeout(hideNoticeTimer);
+                    hideNoticeTimer = window.setTimeout(() => {
+                        if (!hideRequested) return;
+                        document.body.classList.add("pet-hidden");
+                        window.desktopApi?.hideNow?.();
+                    }, 1100);
+                } else if (type === "hidden") {
+                    hideRequested = false;
+                    window.clearTimeout(hideNoticeTimer);
+                    hideNoticeTimer = 0;
+                    document.body.classList.add("pet-hidden");
                 } else if (type === "after-show") {
+                    hideRequested = false;
+                    window.clearTimeout(hideNoticeTimer);
+                    hideNoticeTimer = 0;
+                    document.body.classList.remove("pet-hidden");
                     window.GitStatusPet?.showMiniNotice?.("welcome");
                 } else if (type === "display-changed") {
                     // 显示器切换/菜单跳转：把桌宠放到目标显示器右下角

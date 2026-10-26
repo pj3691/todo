@@ -39,7 +39,10 @@ let loginWin = null;
 let todoWin = null;
 let tray = null;
 let hiding = false;
+let hideStartedAt = 0;
 let hideTimer = null;
+let petHidden = false;
+let overlaySuspended = false;
 let allowQuit = false;
 let petDisplayId = 0;
 
@@ -56,9 +59,27 @@ function openExternal(value) {
 
 // Windows 下透明置顶窗在焦点切换后可能被普通窗口压下去，这里反复重新置顶
 function keepPetOnTop() {
-    if (!petWin || petWin.isDestroyed()) return;
+    if (overlaySuspended || !petWin || petWin.isDestroyed()) return;
     petWin.setAlwaysOnTop(true, "screen-saver");
     petWin.moveTop();
+}
+
+// 待办/登录窗口显示期间把全屏透明层降为普通窗口，避免它影响下层窗口的鼠标指针。
+function suspendPetOverlay() {
+    overlaySuspended = true;
+    if (!petWin || petWin.isDestroyed()) return;
+    petWin.setAlwaysOnTop(false);
+    petWin.setIgnoreMouseEvents(true, { forward: false });
+}
+
+function restorePetOverlay() {
+    if (todoWin && !todoWin.isDestroyed()) return;
+    if (loginWin && !loginWin.isDestroyed()) return;
+    overlaySuspended = false;
+    if (!petWin || petWin.isDestroyed() || petHidden) return;
+    petWin.setAlwaysOnTop(true, "screen-saver");
+    petWin.setIgnoreMouseEvents(true, { forward: true });
+    setTimeout(keepPetOnTop, 30);
 }
 
 function displayStateFile() {
@@ -153,7 +174,7 @@ function handleDisplaysChanged() {
 
 function updateTrayMenu() {
     if (!tray) return;
-    const visible = Boolean(petWin && !petWin.isDestroyed() && petWin.isVisible());
+    const visible = Boolean(petWin && !petWin.isDestroyed() && !petHidden);
     const displays = describeDisplays();
     tray.setContextMenu(
         Menu.buildFromTemplate([
@@ -196,7 +217,7 @@ function createTray() {
     tray = new Tray(icon);
     tray.setToolTip("GitStatus 桌宠");
     tray.on("click", () => {
-        if (petWin && !petWin.isDestroyed() && petWin.isVisible()) hidePet();
+        if (petWin && !petWin.isDestroyed() && !petHidden) hidePet();
         else showPet();
     });
     updateTrayMenu();
@@ -204,8 +225,14 @@ function createTray() {
 
 // 关闭 = 先让页面播报再见小气泡，再把透明覆盖层藏到托盘
 function hidePet() {
-    if (!petWin || petWin.isDestroyed() || !petWin.isVisible() || hiding) return;
+    if (!petWin || petWin.isDestroyed() || petHidden) return;
+    if (hiding) {
+        // 上一次隐藏流程如果卡住，超过兜底时间后直接收尾
+        if (Date.now() - hideStartedAt > 2500) finishHide();
+        return;
+    }
     hiding = true;
+    hideStartedAt = Date.now();
     petWin.webContents.send("pet:event", "before-hide");
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
@@ -217,11 +244,19 @@ function hidePet() {
 function finishHide() {
     if (!hiding) return;
     hiding = false;
+    hideStartedAt = 0;
     if (hideTimer) {
         clearTimeout(hideTimer);
         hideTimer = null;
     }
-    if (petWin && !petWin.isDestroyed()) petWin.hide();
+    petHidden = true;
+    if (petWin && !petWin.isDestroyed()) {
+        // 先清掉页面里的桌宠并把透明层设为不可见，避免 Windows 留下最后一帧
+        petWin.webContents.send("pet:event", "hidden");
+        petWin.setOpacity(0);
+        petWin.setIgnoreMouseEvents(true, { forward: false });
+        petWin.hide();
+    }
     updateTrayMenu();
 }
 
@@ -232,14 +267,39 @@ function showPet() {
         hideTimer = null;
     }
     hiding = false;
+    hideStartedAt = 0;
+    petHidden = false;
+    if (overlaySuspended && !todoWin && !loginWin) overlaySuspended = false;
+    petWin.setOpacity(1);
     petWin.showInactive();
-    petWin.setIgnoreMouseEvents(true, { forward: true });
-    setTimeout(keepPetOnTop, 30);
+    if (overlaySuspended) {
+        petWin.setIgnoreMouseEvents(true, { forward: false });
+        if (todoWin && !todoWin.isDestroyed()) {
+            todoWin.show();
+            todoWin.focus();
+        } else if (loginWin && !loginWin.isDestroyed()) {
+            loginWin.show();
+            loginWin.focus();
+        }
+    } else {
+        petWin.setIgnoreMouseEvents(true, { forward: true });
+        setTimeout(keepPetOnTop, 30);
+    }
     petWin.webContents.send("pet:event", "after-show");
     updateTrayMenu();
 }
 
 function createPetWindow() {
+    if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+    }
+    petHidden = false;
+    hiding = false;
+    hideStartedAt = 0;
+    overlaySuspended = Boolean(
+        (todoWin && !todoWin.isDestroyed()) || (loginWin && !loginWin.isDestroyed())
+    );
     const savedDisplayId = readDisplayState();
     const displays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
@@ -335,13 +395,14 @@ function createPetWindow() {
     });
 
     petWin.once("ready-to-show", () => {
+        if (petHidden) return;
         petWin.showInactive();
         setTimeout(keepPetOnTop, 30);
     });
 
     // 页面加载失败时 ready-to-show 可能迟迟不触发，兜底显示离线页
     setTimeout(() => {
-        if (petWin && !petWin.isDestroyed() && !petWin.isVisible()) {
+        if (petWin && !petWin.isDestroyed() && !petHidden && !petWin.isVisible()) {
             petWin.showInactive();
         }
     }, 2000);
@@ -363,6 +424,7 @@ function resizePetWindow() {
 }
 
 function openLoginWindow() {
+    suspendPetOverlay();
     if (loginWin && !loginWin.isDestroyed()) {
         loginWin.show();
         loginWin.focus();
@@ -395,11 +457,13 @@ function openLoginWindow() {
     void loginWin.loadURL(loginUrl);
     loginWin.on("closed", () => {
         loginWin = null;
+        restorePetOverlay();
     });
 }
 
 // 桌面版打开待办页：默认在应用内窗口打开，可选直达新建待办弹窗
 function openTodoWindow(add = false) {
+    suspendPetOverlay();
     const addUrl = `${serverUrl}/pages/todo.html${add ? "?add=1" : ""}`;
     if (todoWin && !todoWin.isDestroyed()) {
         todoWin.show();
@@ -442,6 +506,7 @@ function openTodoWindow(add = false) {
     void todoWin.loadURL(addUrl);
     todoWin.on("closed", () => {
         todoWin = null;
+        restorePetOverlay();
     });
 }
 
@@ -452,6 +517,10 @@ function openTodoAddWindow() {
 function registerIpc() {
     ipcMain.on("pet:interactive", (event, value) => {
         if (!petWin || event.sender !== petWin.webContents) return;
+        if (overlaySuspended) {
+            petWin.setIgnoreMouseEvents(true, { forward: false });
+            return;
+        }
         if (value) petWin.setIgnoreMouseEvents(false);
         else petWin.setIgnoreMouseEvents(true, { forward: true });
         setTimeout(keepPetOnTop, 30);

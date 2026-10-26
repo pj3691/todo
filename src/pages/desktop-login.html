@@ -119,5 +119,10 @@
     </main>
     <script src="/pages/assets/js/auth-client.js"></script>
     <script src="/pages/assets/js/desktop-login.js"></script>
+    <script>
+        if (navigator.userAgent.includes("Electron")) {
+            document.documentElement.classList.add("desktop-app");
+        }
+    </script>
 </body>
 </html>
