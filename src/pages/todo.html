@@ -711,6 +711,7 @@
             position: relative;
             overflow: hidden;
             min-width: 0;
+            height: 360px;
             display: flex;
             flex-direction: column;
             padding: 17px 17px 15px 20px;
@@ -749,7 +750,14 @@
             opacity: 1;
         }
 
+        @media (max-width: 600px) {
+            .todo-card {
+                height: 330px;
+            }
+        }
+
         .card-top {
+            flex: 0 0 auto;
             display: flex;
             align-items: flex-start;
             gap: 9px;
@@ -896,7 +904,32 @@
 
         .todo-main {
             min-width: 0;
+            flex: 1 1 auto;
+            min-height: 0;
             margin-top: 11px;
+            padding-right: 6px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd9ce transparent;
+        }
+
+        .todo-main::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .todo-main::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .todo-main::-webkit-scrollbar-thumb {
+            border-radius: 999px;
+            background: #cbd9ce;
+        }
+
+        .todo-main::-webkit-scrollbar-thumb:hover {
+            background: #b3c7b9;
         }
 
         .todo-title {
@@ -1022,6 +1055,7 @@
         }
 
         .todo-footer {
+            flex: 0 0 auto;
             margin-top: auto;
             padding-top: 13px;
         }
@@ -1970,6 +2004,7 @@
             display: inline-flex;
             align-items: center;
             gap: 4px;
+            min-width: 0;
             max-width: 100%;
             padding: 2px 8px;
             border: 1px solid var(--line);
@@ -1984,6 +2019,24 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .card-file-chip[data-action] {
+            appearance: none;
+            text-align: left;
+            cursor: pointer;
+            transition: 0.16s ease;
+        }
+
+        .card-file-chip[data-action]:hover {
+            border-color: #bdd7c6;
+            background: var(--green-soft);
+            color: var(--green-strong);
+        }
+
+        .card-file-chip[data-action]:focus-visible {
+            outline: 3px solid rgba(31, 122, 77, 0.24);
+            outline-offset: 2px;
         }
 
         .form-error {
@@ -7125,6 +7178,7 @@
                     <a href="/pages/index.html">Git 洞察</a>
                     <a class="active" href="/pages/todo.html" aria-current="page">待办清单</a>
                     <a href="/pages/shares.html">数据共享</a>
+                    <a href="/pages/projects.html">项目管理</a>
                     <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
                 </nav>
 
@@ -9710,12 +9764,7 @@
                 : images.map((image) => ({ ...image, kind: 'image' }));
             const files = attachments.filter((item) => item && item.kind === 'file');
             el.detailFiles.innerHTML = files.map((file) => {
-                const mime = String(file.mimeType || '').toLowerCase();
-                const actionTitle = state.localClient
-                    ? `用系统默认程序打开 ${file.originalName || '附件'}`
-                    : (BROWSER_PREVIEWABLE_TYPES.has(mime)
-                        ? `在浏览器中打开 ${file.originalName || '附件'}`
-                        : `下载 ${file.originalName || '附件'}`);
+                const actionTitle = attachmentActionTitle(file);
                 return `<div class="detail-file-item">
                 <button class="detail-file-open" type="button" data-detail-file-open="${Number(file.id)}" title="${escapeHtml(actionTitle)}">
                     <span class="file-attachment-icon" aria-hidden="true">${SVG.paperclip}</span>
@@ -10267,7 +10316,16 @@
             </div>`;
         }
 
-        /** 非图片附件只展示名称，不做任何预览 */
+        function attachmentActionTitle(file) {
+            const name = file.originalName || '附件';
+            if (state.localClient) return `用系统默认程序打开 ${name}`;
+            const mime = String(file.mimeType || '').toLowerCase();
+            return BROWSER_PREVIEWABLE_TYPES.has(mime)
+                ? `在浏览器中打开 ${name}`
+                : `下载 ${name}`;
+        }
+
+        /** 非图片附件：卡片上直接点击，打开行为与详情一致 */
         function renderCardFiles(attachments) {
             const files = (Array.isArray(attachments) ? attachments : [])
                 .filter((item) => item && item.kind === 'file');
@@ -10275,7 +10333,11 @@
             const visible = files.slice(0, 2);
             const extra = files.length - visible.length;
             return `<div class="card-files">
-                ${visible.map((file) => `<span class="card-file-chip" title="${escapeHtml(file.originalName || '附件')}">${SVG.paperclip}<span>${escapeHtml(file.originalName || '附件')}</span></span>`).join('')}
+                ${visible.map((file) => {
+                    const name = escapeHtml(file.originalName || '附件');
+                    const actionTitle = escapeHtml(attachmentActionTitle(file));
+                    return `<button class="card-file-chip" type="button" data-action="open-attachment" data-attachment-id="${Number(file.id)}" title="${actionTitle}" aria-label="${actionTitle}">${SVG.paperclip}<span>${name}</span></button>`;
+                }).join('')}
                 ${extra > 0 ? `<span class="card-file-chip">+${extra}</span>` : ''}
             </div>`;
         }
@@ -11515,6 +11577,20 @@
                 window.setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
             } catch (error) {
                 showToast(humanizeError(error.message, '附件下载失败'), 'error');
+            }
+        }
+
+        /** 打开非图片附件：本机交系统程序，其他设备按类型预览或下载（详情与卡片共用） */
+        function openFileAttachment(attachment) {
+            if (!attachment) return;
+            const mime = String(attachment.mimeType || '').toLowerCase();
+            if (state.localClient) {
+                openAttachmentWithSystem(attachment);
+            } else if (BROWSER_PREVIEWABLE_TYPES.has(mime)) {
+                openAttachmentInBrowser(attachment);
+            } else {
+                showToast('该文件类型不支持浏览器预览，已开始下载。', 'warning');
+                downloadAttachment(attachment);
             }
         }
 
@@ -12927,6 +13003,18 @@
                     loadTodos();
                     return;
                 }
+                if (action === 'open-attachment') {
+                    const card = button.closest('.todo-card');
+                    const todoId = Number(card?.dataset.todoId);
+                    const todo = state.todos.find((item) => Number(item.id) === todoId)
+                        || state.treeTodos.find((item) => Number(item.id) === todoId);
+                    const attachments = Array.isArray(todo?.attachments) ? todo.attachments : [];
+                    const attachment = attachments.find(
+                        (item) => Number(item.id) === Number(button.dataset.attachmentId)
+                    );
+                    if (attachment) openFileAttachment(attachment);
+                    return;
+                }
                 const id = Number(button.dataset.id);
                 const todo = state.todos.find((item) => Number(item.id) === id)
                     || state.treeTodos.find((item) => Number(item.id) === id);
@@ -13030,15 +13118,7 @@
                     downloadAttachment(attachment);
                     return;
                 }
-                const mime = String(attachment.mimeType || '').toLowerCase();
-                if (state.localClient) {
-                    openAttachmentWithSystem(attachment);
-                } else if (BROWSER_PREVIEWABLE_TYPES.has(mime)) {
-                    openAttachmentInBrowser(attachment);
-                } else {
-                    showToast('该文件类型不支持浏览器预览，已开始下载。', 'warning');
-                    downloadAttachment(attachment);
-                }
+                openFileAttachment(attachment);
             });
 
             el.todoForm.addEventListener('submit', submitTodoForm);
@@ -13219,6 +13299,11 @@
         });
 
         boot();
+    </script>
+    <script>
+        if (navigator.userAgent.includes("Electron")) {
+            document.documentElement.classList.add("desktop-app");
+        }
     </script>
     <script>window.GITSTATUS_PET_PAGE = "todo";</script>
     <script src="/pages/assets/js/pet-widget.js"></script>
