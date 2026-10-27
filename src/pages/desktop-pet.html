@@ -6,7 +6,7 @@
     <title>GitStatus 桌宠</title>
     <link rel="stylesheet" href="/pages/assets/styles/theme.css">
     <link rel="stylesheet" href="/pages/assets/styles/components.css">
-    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css">
+    <link rel="stylesheet" href="/pages/assets/styles/pet-widget.css?v=20261026m">
     <style>
         html,
         body {
@@ -42,13 +42,18 @@
             : null;
         window.GITSTATUS_PET_CONFIG = {
             desktop: true,
+            desktopStage: true,
             initialPosition,
             onLogin: () => window.desktopApi?.openLogin()
         };
     </script>
-    <script src="/pages/assets/js/pet-widget.js"></script>
+    <script src="/pages/assets/js/pet-widget.js?v=20261026m"></script>
     <script>
         (function () {
+            window.desktopApi?.onStageAnchor?.((anchor) => {
+                window.GitStatusPet?.setStageAnchor?.(anchor);
+            });
+
             // 透明区域点击穿透：只有桌宠和气泡区域接收鼠标
             let interactive = false;
             function setInteractive(value) {
@@ -66,6 +71,76 @@
 
             document.addEventListener("mouseout", (event) => {
                 if (!event.relatedTarget) setInteractive(false);
+            });
+
+            // Windows 原生窗口区域：只让桌宠和气泡所在矩形参与命中测试，
+            // 其余透明区域不接收鼠标，直接落到待办/登录等窗口。
+            const hitSelectors = [
+                ".pet-widget",
+                ".pet-avatar",
+                ".pet-bubble",
+                ".pet-mini",
+                ".pet-menu-btn",
+                ".pet-add-btn",
+                ".pet-todo-btn"
+            ];
+            let hitFrame = 0;
+            let lastHitSignature = "";
+
+            function collectHitRegions() {
+                const regions = [];
+                for (const selector of hitSelectors) {
+                    for (const element of document.querySelectorAll(selector)) {
+                        const style = getComputedStyle(element);
+                        const rect = element.getBoundingClientRect();
+                        if (
+                            rect.width <= 0 ||
+                            rect.height <= 0 ||
+                            style.display === "none" ||
+                            style.visibility === "hidden" ||
+                            Number(style.opacity) <= 0.01
+                        ) {
+                            continue;
+                        }
+                        const padding = 12;
+                        const left = Math.max(0, Math.floor(rect.left - padding));
+                        const top = Math.max(0, Math.floor(rect.top - padding));
+                        const right = Math.min(window.innerWidth, Math.ceil(rect.right + padding));
+                        const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padding));
+                        if (right <= left || bottom <= top) continue;
+                        regions.push({ x: left, y: top, width: right - left, height: bottom - top });
+                    }
+                }
+                return regions;
+            }
+
+            function reportHitRegions() {
+                hitFrame = 0;
+                if (!window.desktopApi?.setHitRegions) return;
+                // 拖拽期间由主进程负责窗口移动，避免每帧重复计算命中矩形。
+                if (document.querySelector(".pet-widget.is-dragging")) return;
+                const regions = collectHitRegions();
+                const signature = JSON.stringify(regions);
+                if (signature === lastHitSignature) return;
+                lastHitSignature = signature;
+                window.desktopApi.setHitRegions(regions);
+            }
+
+            function scheduleHitRegions() {
+                if (hitFrame) return;
+                hitFrame = window.requestAnimationFrame(reportHitRegions);
+            }
+
+            window.setTimeout(scheduleHitRegions, 0);
+            window.setInterval(reportHitRegions, 150);
+            window.addEventListener("resize", scheduleHitRegions);
+            document.addEventListener("pointermove", scheduleHitRegions, { passive: true });
+            document.addEventListener("pointerup", scheduleHitRegions, { passive: true });
+            new MutationObserver(scheduleHitRegions).observe(document.body, {
+                subtree: true,
+                childList: true,
+                attributes: true,
+                attributeFilter: ["class", "style", "aria-hidden"]
             });
 
             // 气泡里的链接统一交给系统浏览器打开，避免把桌宠窗口导航走
@@ -120,28 +195,7 @@
                     document.body.classList.remove("pet-hidden");
                     window.GitStatusPet?.showMiniNotice?.("welcome");
                 } else if (type === "display-changed") {
-                    // 显示器切换/菜单跳转：把桌宠放到目标显示器右下角
-                    window.setTimeout(async () => {
-                        try {
-                            const info = await window.desktopApi?.getDisplays?.();
-                            const current = info?.displays?.find(
-                                (display) => display.id === info.currentId
-                            );
-                            const area = current?.workArea;
-                            if (area && Number.isFinite(area.x) && Number.isFinite(area.y)) {
-                                window.GitStatusPet?.resetPosition?.({
-                                    left: area.x - window.screenX,
-                                    top: area.y - window.screenY,
-                                    width: area.width,
-                                    height: area.height
-                                });
-                                return;
-                            }
-                        } catch {
-                            /* 获取显示器失败时回退到当前视口右下角 */
-                        }
-                        window.GitStatusPet?.resetPosition?.();
-                    }, 100);
+                    // 舞台窗口由主进程直接移动到目标显示器，页面内位置不变。
                 }
             });
 

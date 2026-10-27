@@ -18,6 +18,8 @@
         apiBase: "/gitstatus/api",
         // 桌面版模式：位置由 Electron 窗口控制，拖拽移动窗口
         desktop: false,
+        // 桌面版局部舞台：桌宠固定在舞台右下角，拖拽时移动整个窗口
+        desktopStage: false,
         // 桌面版：首次没有保存位置时的初始区域（虚拟桌面内的局部坐标）
         initialPosition: null,
         // 待办页面地址
@@ -105,6 +107,7 @@
         alertTimer: 0,
         requestSeq: 0,
         hoverBubble: false,
+        stageAnchor: null,
         drag: null,
         audioCtx: null
     };
@@ -271,6 +274,128 @@
         state.remotePetImage = "";
     }
 
+    /**
+     * 桌面桌宠素材如果是纯色背景图，按边缘连通区域抠掉背景。
+     * 只处理 PNG/JPEG/WebP 静态图，避免破坏 GIF 动画。
+     */
+    function createTransparentPetImageUrl(blob) {
+        if (!blob || /gif/i.test(blob.type || "")) return Promise.resolve(URL.createObjectURL(blob));
+        return new Promise((resolve) => {
+            const sourceUrl = URL.createObjectURL(blob);
+            const image = new Image();
+            image.decoding = "async";
+            image.onerror = () => resolve(sourceUrl);
+            image.onload = () => {
+                try {
+                    const maxSide = 1024;
+                    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+                    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+                    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+                    const canvas = document.createElement("canvas");
+                    canvas.width = width;
+                    canvas.height = height;
+                    const context = canvas.getContext("2d", { willReadFrequently: true });
+                    if (!context) {
+                        resolve(sourceUrl);
+                        return;
+                    }
+                    context.drawImage(image, 0, 0, width, height);
+                    const imageData = context.getImageData(0, 0, width, height);
+                    const data = imageData.data;
+                    const corners = [
+                        [0, 0],
+                        [width - 1, 0],
+                        [0, height - 1],
+                        [width - 1, height - 1]
+                    ].map(([x, y]) => {
+                        const offset = (y * width + x) * 4;
+                        return [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+                    });
+                    if (corners.filter((corner) => corner[3] < 16).length >= 3) {
+                        resolve(sourceUrl);
+                        return;
+                    }
+                    const background = corners
+                        .filter((corner) => corner[3] >= 16)
+                        .reduce(
+                            (acc, corner) => [
+                                acc[0] + corner[0] / 4,
+                                acc[1] + corner[1] / 4,
+                                acc[2] + corner[2] / 4,
+                                acc[3] + corner[3] / 4
+                            ],
+                            [0, 0, 0, 0]
+                        );
+                    const tolerance = 28;
+                    const cornerMatches = corners.filter(
+                        (corner) => corner[3] < 16 ||
+                            Math.sqrt(
+                                (corner[0] - background[0]) ** 2 +
+                                (corner[1] - background[1]) ** 2 +
+                                (corner[2] - background[2]) ** 2
+                            ) <= tolerance
+                    ).length;
+                    if (cornerMatches < 3) {
+                        resolve(sourceUrl);
+                        return;
+                    }
+                    const total = width * height;
+                    const visited = new Uint8Array(total);
+                    const queue = new Uint32Array(total);
+                    let head = 0;
+                    let tail = 0;
+                    const matchesBackground = (index) => {
+                        const offset = index * 4;
+                        if (data[offset + 3] < 16) return true;
+                        const dr = data[offset] - background[0];
+                        const dg = data[offset + 1] - background[1];
+                        const db = data[offset + 2] - background[2];
+                        return Math.sqrt(dr * dr + dg * dg + db * db) <= tolerance;
+                    };
+                    const enqueue = (index) => {
+                        if (visited[index] || !matchesBackground(index)) return;
+                        visited[index] = 1;
+                        data[index * 4 + 3] = 0;
+                        queue[tail++] = index;
+                    };
+                    for (let x = 0; x < width; x += 1) {
+                        enqueue(x);
+                        enqueue((height - 1) * width + x);
+                    }
+                    for (let y = 1; y < height - 1; y += 1) {
+                        enqueue(y * width);
+                        enqueue(y * width + width - 1);
+                    }
+                    while (head < tail) {
+                        const index = queue[head++];
+                        const x = index % width;
+                        const y = Math.floor(index / width);
+                        if (x > 0) enqueue(index - 1);
+                        if (x < width - 1) enqueue(index + 1);
+                        if (y > 0) enqueue(index - width);
+                        if (y < height - 1) enqueue(index + width);
+                    }
+                    if (tail / total < 0.02) {
+                        resolve(sourceUrl);
+                        return;
+                    }
+                    context.putImageData(imageData, 0, 0);
+                    canvas.toBlob((result) => {
+                        if (result) {
+                            URL.revokeObjectURL(sourceUrl);
+                            resolve(URL.createObjectURL(result));
+                        } else {
+                            resolve(sourceUrl);
+                        }
+                    }, "image/png");
+                } catch {
+                    resolve(sourceUrl);
+                }
+            };
+            image.src = sourceUrl;
+        });
+    }
+
     /** 按设置里的 petImageUrl 取图；图片接口需要登录态，因此先取 Blob 再展示 */
     async function syncRemotePetImage(url, force) {
         const target = String(url || "");
@@ -296,7 +421,7 @@
                 return;
             }
             const blob = await res.blob();
-            const objectUrl = URL.createObjectURL(blob);
+            const objectUrl = await createTransparentPetImageUrl(blob);
             revokeRemotePetImage();
             state.remotePetImage = objectUrl;
             state.remotePetImageUrl = target;
@@ -497,6 +622,15 @@
     }
 
     function restorePosition() {
+        if (state.config.desktopStage) {
+            const size = petSize();
+            applyPosition(
+                global.innerWidth - size - state.config.margin,
+                global.innerHeight - size - state.config.margin,
+                false
+            );
+            return;
+        }
         const saved = readJson(state.config.positionKey, null);
         const size = petSize();
         if (saved && Number.isFinite(Number(saved.left)) && Number.isFinite(Number(saved.top))) {
@@ -544,14 +678,44 @@
         event.stopPropagation();
 
         const rect = state.root.getBoundingClientRect();
+        const avatarRect = state.avatar.getBoundingClientRect();
+        const cursor = global.desktopApi?.getCursorPoint?.() || null;
         state.drag = {
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
             left: rect.left,
             top: rect.top,
-            moved: false
+            offsetX: event.clientX - avatarRect.left,
+            offsetY: event.clientY - avatarRect.top,
+            moved: false,
+            windowDrag: Boolean(
+                state.config.desktopStage &&
+                    global.desktopApi?.setDesktopDragging &&
+                    global.desktopApi?.getCursorPoint
+            ),
+            windowStarted: false,
+            startCursorX: Number.isFinite(cursor?.x) ? cursor.x : event.screenX,
+            startCursorY: Number.isFinite(cursor?.y) ? cursor.y : event.screenY,
+            lastScreenX: event.screenX,
+            lastScreenY: event.screenY,
+            startPetLeft: global.screenX + rect.left,
+            startPetTop: global.screenY + rect.top,
+            windowX: global.screenX,
+            windowY: global.screenY,
+            workArea: {
+                x: global.screen.availLeft || 0,
+                y: global.screen.availTop || 0,
+                width: global.screen.availWidth || global.innerWidth,
+                height: global.screen.availHeight || global.innerHeight
+            },
+            frame: 0
         };
+        // 在指针按下时就停掉 hover guard，避免拖动开始的第一帧
+        // 被 setIgnoreMouseEvents 切换打断而出现方向性闪烁。
+        if (state.drag.windowDrag) {
+            global.desktopApi.setDesktopDragging(true);
+        }
         state.root.classList.add("is-pressed");
         try {
             state.avatar.setPointerCapture(event.pointerId);
@@ -577,17 +741,114 @@
             hideMini();
         }
         if (event.cancelable) event.preventDefault();
+        if (drag.windowDrag) {
+            drag.lastScreenX = event.screenX;
+            drag.lastScreenY = event.screenY;
+            if (!drag.windowStarted) {
+                drag.windowStarted = true;
+                // 用主进程读到的真实光标位置驱动，避免窗口自身移动时
+                // pointer event 的 screenX 回跳造成桌宠抖动。
+                const step = () => {
+                    if (state.drag !== drag) return;
+                    applyDesktopDrag(drag);
+                    drag.frame = global.requestAnimationFrame(step);
+                };
+                drag.frame = global.requestAnimationFrame(step);
+            }
+            return;
+        }
         applyPosition(drag.left + dx, drag.top + dy, false);
+    }
+
+    function applyDesktopDrag(drag) {
+        const size = petSize();
+        const margin = state.config.margin;
+        const stageWidth = global.innerWidth;
+        const stageHeight = global.innerHeight;
+        const area = drag.workArea;
+        const cursor = global.desktopApi.getCursorPoint?.();
+        const cursorX = Number.isFinite(cursor?.x) ? cursor.x : drag.lastScreenX;
+        const cursorY = Number.isFinite(cursor?.y) ? cursor.y : drag.lastScreenY;
+        const targetPetLeft = clamp(
+            drag.startPetLeft + (cursorX - drag.startCursorX),
+            area.x,
+            area.x + area.width - size
+        );
+        const targetPetTop = clamp(
+            drag.startPetTop + (cursorY - drag.startCursorY),
+            area.y,
+            area.y + area.height - size
+        );
+        let nextWindowX = drag.windowX;
+        let nextWindowY = drag.windowY;
+        let localX = targetPetLeft - nextWindowX;
+        let localY = targetPetTop - nextWindowY;
+        const maxLocalX = stageWidth - size - margin;
+        const maxLocalY = stageHeight - size - margin;
+        if (localX < margin || localX > maxLocalX) {
+            const anchorX = Math.max(margin, Math.min(maxLocalX, (stageWidth - size) / 2));
+            nextWindowX = clamp(
+                targetPetLeft - anchorX,
+                area.x,
+                Math.max(area.x, area.x + area.width - stageWidth)
+            );
+            localX = targetPetLeft - nextWindowX;
+        }
+        if (localY < margin || localY > maxLocalY) {
+            const anchorY = Math.max(margin, Math.min(maxLocalY, (stageHeight - size) / 2));
+            nextWindowY = clamp(
+                targetPetTop - anchorY,
+                area.y,
+                Math.max(area.y, area.y + area.height - stageHeight)
+            );
+            localY = targetPetTop - nextWindowY;
+        }
+        // 窗口和桌宠位置在同一帧一起改，窗口只在大范围换位时移动，
+        // 不再像之前那样每帧移动整块透明窗口，也不会在松手时缩放舞台。
+        if (nextWindowX !== drag.windowX || nextWindowY !== drag.windowY) {
+            global.moveTo(Math.round(nextWindowX), Math.round(nextWindowY));
+            drag.windowX = nextWindowX;
+            drag.windowY = nextWindowY;
+        }
+        // 用当前真实窗口位置反算局部坐标，窗口移动若晚一帧生效，
+        // 桌宠仍会保持在光标下，而不是跟着窗口一起跳。
+        const actualWindowX = Number.isFinite(global.screenX) ? global.screenX : nextWindowX;
+        const actualWindowY = Number.isFinite(global.screenY) ? global.screenY : nextWindowY;
+        localX = targetPetLeft - actualWindowX;
+        localY = targetPetTop - actualWindowY;
+        state.root.style.left = `${Math.round(localX)}px`;
+        state.root.style.top = `${Math.round(localY)}px`;
+        state.root.style.right = "auto";
+        state.root.style.bottom = "auto";
+        const isRight = targetPetLeft + size / 2 > area.x + area.width / 2;
+        state.root.classList.toggle("is-right", isRight);
+        state.root.classList.toggle("is-flipped", state.petMirror && isRight);
     }
 
     function onPointerUp(event) {
         const drag = state.drag;
         if (!drag || (event.pointerId !== undefined && event.pointerId !== drag.pointerId)) return;
         state.drag = null;
+        if (drag.frame) {
+            global.cancelAnimationFrame(drag.frame);
+            drag.frame = 0;
+        }
         state.root.classList.remove("is-pressed", "is-dragging");
         global.removeEventListener("pointermove", onPointerMove);
         global.removeEventListener("pointerup", onPointerUp);
         global.removeEventListener("pointercancel", onPointerUp);
+
+        if (drag.windowDrag) {
+            global.desktopApi.setDesktopDragging?.(false);
+            if (!drag.moved) {
+                toggleMini();
+                return;
+            }
+            if (state.queue.length > 0) {
+                window.setTimeout(showNextReminder, 300);
+            }
+            return;
+        }
 
         if (!drag.moved) {
             toggleMini();
@@ -611,12 +872,31 @@
         const width = Math.min(maxWidth, global.innerWidth - 24);
         state.bubble.style.width = `${width}px`;
         const height = state.bubble.offsetHeight;
-        let left = clamp(rect.right - width + 4, 10, global.innerWidth - width - 10);
-        let top = rect.top - height - 12;
-        if (top < 10) top = rect.bottom + 12;
-        top = clamp(top, 10, Math.max(10, global.innerHeight - height - 10));
-        state.bubble.style.left = `${Math.round(left)}px`;
-        state.bubble.style.top = `${Math.round(top)}px`;
+        const edge = 10;
+        const gap = 12;
+        const maxLeft = Math.max(edge, global.innerWidth - width - edge);
+        const maxTop = Math.max(edge, global.innerHeight - height - edge);
+        // 四向避让：优先左上/右上，再尝试下方；仍放不下时夹到舞台边界。
+        const leftCandidates = [rect.right - width + 4, rect.left - 4];
+        const topCandidates = [rect.top - height - gap, rect.bottom + gap];
+        let position = null;
+        for (const top of topCandidates) {
+            for (const left of leftCandidates) {
+                if (left >= edge && left <= maxLeft && top >= edge && top <= maxTop) {
+                    position = { left, top };
+                    break;
+                }
+            }
+            if (position) break;
+        }
+        if (!position) {
+            position = {
+                left: clamp(leftCandidates[0], edge, maxLeft),
+                top: clamp(topCandidates[0], edge, maxTop)
+            };
+        }
+        state.bubble.style.left = `${Math.round(position.left)}px`;
+        state.bubble.style.top = `${Math.round(position.top)}px`;
     }
 
     function showBubble(content, type) {
@@ -2161,8 +2441,14 @@
     }
 
     function onResize() {
-        const rect = state.root.getBoundingClientRect();
-        applyPosition(rect.left, rect.top, false);
+        // 拖动时主进程会把舞台缩到桌宠大小，窗口尺寸变化后必须按当前锚点重摆；
+        // 只看 rect.left/top 会把桌宠夹到紧凑窗口的错误角落。
+        if (state.config.desktopStage && state.stageAnchor) {
+            applyStageAnchor(state.stageAnchor);
+        } else {
+            const rect = state.root.getBoundingClientRect();
+            applyPosition(rect.left, rect.top, false);
+        }
         placeBubble();
         positionMini();
     }
@@ -2261,6 +2547,26 @@
         state.inited = false;
     }
 
+    function applyStageAnchor(anchor) {
+        if (!state.config.desktopStage || !state.root) return;
+        const size = petSize();
+        const margin = state.config.margin;
+        applyPosition(
+            anchor?.right === false ? margin : global.innerWidth - size - margin,
+            anchor?.bottom === false ? margin : global.innerHeight - size - margin,
+            false
+        );
+    }
+
+    function setStageAnchor(anchor) {
+        if (!state.config.desktopStage || !state.root) return;
+        state.stageAnchor = {
+            right: anchor?.right !== false,
+            bottom: anchor?.bottom !== false
+        };
+        applyStageAnchor(state.stageAnchor);
+    }
+
     const api = {
         init,
         destroy,
@@ -2268,6 +2574,7 @@
         showSummary: () => renderSummary(),
         /** 桌面版隐藏 / 回来时的小气泡文案 */
         showMiniNotice: (kind) => showMiniNotice(kind),
+        setStageAnchor,
         /** 切换显示器后回到目标区域右下角（桌面版传入虚拟桌面内的局部区域） */
         resetPosition: (bounds) => {
             if (!state.root) return;
