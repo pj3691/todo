@@ -1,5 +1,6 @@
-import { execFileSync, spawn, type ChildProcess } from "child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import express from "express";
 import type Database from "better-sqlite3";
@@ -63,6 +64,20 @@ type ProjectRuntime = {
     seq: number;
     stopRequested: boolean;
     stopTimer: NodeJS.Timeout | null;
+    startedAt: number | null;
+};
+
+type ProcessUsageRow = {
+    pid: number;
+    ppid: number;
+    memoryBytes: number;
+    cpuMs: number;
+};
+
+type ProcessTable = {
+    at: number;
+    rows: Map<number, ProcessUsageRow>;
+    children: Map<number, number[]>;
 };
 
 type CommandRunStatus = "running" | "stopping" | "success" | "error" | "stopped";
@@ -131,6 +146,8 @@ type DetectionResult = {
 };
 
 type EditorId = "vscode" | "qoder" | "explorer";
+
+const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = ["starting", "running", "stopping"];
 
 type AuthedRequest = express.Request & {
     user?: {
@@ -557,6 +574,175 @@ const launchEditorCli = (command: string, args: string[], cwd: string): void => 
     child.unref();
 };
 
+const PROCESS_TABLE_TTL_MS = 1000;
+
+let processTableCache: ProcessTable | null = null;
+let processTableInflight: Promise<ProcessTable | null> | null = null;
+
+const buildProcessTable = (
+    at: number,
+    rows: Array<{ pid?: unknown; ppid?: unknown; memoryBytes?: unknown; cpuMs?: unknown }>
+): ProcessTable => {
+    const byPid = new Map<number, ProcessUsageRow>();
+    for (const row of rows) {
+        const pid = Number(row.pid);
+        if (!Number.isInteger(pid) || pid <= 0) continue;
+        byPid.set(pid, {
+            pid,
+            ppid: Number(row.ppid) || 0,
+            memoryBytes: Math.max(0, Number(row.memoryBytes) || 0),
+            cpuMs: Math.max(0, Number(row.cpuMs) || 0),
+        });
+    }
+    const children = new Map<number, number[]>();
+    for (const row of byPid.values()) {
+        if (!row.ppid) continue;
+        const list = children.get(row.ppid) || [];
+        list.push(row.pid);
+        children.set(row.ppid, list);
+    }
+    return { at, rows: byPid, children };
+};
+
+const parseUnixCpuTime = (value: string): number => {
+    const text = String(value || "").trim();
+    if (!text) return 0;
+    const split = text.includes("-") ? text.split("-", 2) : ["0", text];
+    const dayPart = split[0] || "0";
+    const timePart = split[1] || "0";
+    const parts = timePart.split(":").map((part) => Number(part) || 0);
+    let seconds = 0;
+    if (parts.length >= 3) {
+        seconds = (parts[0] ?? 0) * 3600 + (parts[1] ?? 0) * 60 + (parts[2] ?? 0);
+    } else if (parts.length === 2) {
+        seconds = (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+    } else {
+        seconds = parts[0] ?? 0;
+    }
+    return (Number(dayPart) * 86400 + seconds) * 1000;
+};
+
+const readWindowsProcessTable = (): Promise<ProcessTable | null> => {
+    const powershell = path.join(
+        process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe"
+    );
+    const script = [
+        "$ErrorActionPreference = 'SilentlyContinue';",
+        "$items = @(Get-CimInstance Win32_Process | ForEach-Object {",
+        "[pscustomobject]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; ws = [long]$_.WorkingSetSize; cpu = [double]$_.UserModeTime + [double]$_.KernelModeTime }",
+        "});",
+        "if ($items.Count -eq 0) { '[]' } else { $items | ConvertTo-Json -Compress }",
+    ].join(" ");
+
+    return new Promise((resolve) => {
+        execFile(
+            powershell,
+            ["-NoProfile", "-NonInteractive", "-Command", script],
+            { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
+            (error, stdout) => {
+                if (error || !stdout.trim()) {
+                    resolve(null);
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(stdout);
+                    const list = Array.isArray(parsed) ? parsed : [parsed];
+                    resolve(
+                        buildProcessTable(
+                            Date.now(),
+                            list.map((item: Record<string, unknown>) => ({
+                                pid: item.pid,
+                                ppid: item.ppid,
+                                memoryBytes: item.ws,
+                                cpuMs: (Number(item.cpu) || 0) / 10000,
+                            }))
+                        )
+                    );
+                } catch {
+                    resolve(null);
+                }
+            }
+        );
+    });
+};
+
+const readUnixProcessTable = (): Promise<ProcessTable | null> => {
+    return new Promise((resolve) => {
+        execFile(
+            "ps",
+            ["-axo", "pid=,ppid=,rss=,time="],
+            { encoding: "utf8", timeout: 4000, maxBuffer: 4 * 1024 * 1024 },
+            (error, stdout) => {
+                if (error || !stdout.trim()) {
+                    resolve(null);
+                    return;
+                }
+                const rows: Array<{ pid: number; ppid: number; memoryBytes: number; cpuMs: number }> = [];
+                for (const line of stdout.split(/\r?\n/)) {
+                    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)$/);
+                    if (!match) continue;
+                    rows.push({
+                        pid: Number(match[1]),
+                        ppid: Number(match[2]),
+                        memoryBytes: Number(match[3]) * 1024,
+                        cpuMs: parseUnixCpuTime(match[4] || ""),
+                    });
+                }
+                resolve(buildProcessTable(Date.now(), rows));
+            }
+        );
+    });
+};
+
+const readProcessTable = (): Promise<ProcessTable | null> => {
+    const now = Date.now();
+    if (processTableCache && now - processTableCache.at < PROCESS_TABLE_TTL_MS) {
+        return Promise.resolve(processTableCache);
+    }
+    if (processTableInflight) return processTableInflight;
+    const task = (process.platform === "win32"
+        ? readWindowsProcessTable()
+        : readUnixProcessTable())
+        .then((table) => {
+            if (table) processTableCache = table;
+            return table;
+        })
+        .finally(() => {
+            processTableInflight = null;
+        });
+    processTableInflight = task;
+    return task;
+};
+
+const collectProcessUsage = (
+    table: ProcessTable,
+    rootPid: number
+): { cpuMs: number; memoryBytes: number; processCount: number } | null => {
+    if (!table.rows.has(rootPid)) return null;
+    const stack = [rootPid];
+    const visited = new Set<number>();
+    let cpuMs = 0;
+    let memoryBytes = 0;
+    let processCount = 0;
+    while (stack.length > 0) {
+        const pid = stack.pop()!;
+        if (visited.has(pid)) continue;
+        visited.add(pid);
+        const row = table.rows.get(pid);
+        if (!row) continue;
+        processCount += 1;
+        cpuMs += row.cpuMs;
+        memoryBytes += row.memoryBytes;
+        const children = table.children.get(pid);
+        if (children) stack.push(...children);
+    }
+    return { cpuMs, memoryBytes, processCount };
+};
+
 const openProjectInEditor = (projectPath: string, editor: EditorId): string => {
     if (editor === "explorer") {
         if (process.platform === "win32") {
@@ -646,6 +832,7 @@ export const registerProjectFeature = (
 
     const runtimes = new Map<number, ProjectRuntime>();
     const commandRuns = new Map<number, CommandRunRuntime>();
+    const processCpuSamples = new Map<string, { at: number; cpuMs: number }>();
     let nextRunId = 1;
 
     const listProjectsStmt = db.prepare("SELECT * FROM projects ORDER BY id DESC");
@@ -674,19 +861,17 @@ export const registerProjectFeature = (
     );
 
     const getRuntime = (id: number): ProjectRuntime => {
-        let runtime = runtimes.get(id);
-        if (!runtime) {
-            runtime = {
-                status: "stopped",
-                pid: null,
-                child: null,
-                logs: [],
-                seq: 0,
-                stopRequested: false,
-                stopTimer: null,
-            };
-            runtimes.set(id, runtime);
-        }
+        const runtime: ProjectRuntime = runtimes.get(id) ?? {
+            status: "stopped",
+            pid: null,
+            child: null,
+            logs: [],
+            seq: 0,
+            stopRequested: false,
+            stopTimer: null,
+            startedAt: null,
+        };
+        if (!runtimes.has(id)) runtimes.set(id, runtime);
         return runtime;
     };
 
@@ -858,6 +1043,8 @@ export const registerProjectFeature = (
 
         pushLog(runtime, "system", `$ ${command}\n`);
         runtime.status = "starting";
+        runtime.pid = null;
+        runtime.startedAt = null;
         runtime.stopRequested = false;
         clearStopTimer(runtime);
 
@@ -892,6 +1079,7 @@ export const registerProjectFeature = (
             if (runtime.child !== child) return;
             runtime.status = "running";
             runtime.pid = child.pid ?? runtime.pid;
+            runtime.startedAt = Date.now();
             pushLog(runtime, "system", `进程已启动${runtime.pid ? ` (PID ${runtime.pid})` : ""}\n`);
         });
 
@@ -899,6 +1087,7 @@ export const registerProjectFeature = (
             if (runtime.child !== child) return;
             runtime.status = "error";
             runtime.pid = null;
+            runtime.startedAt = null;
             runtime.child = null;
             clearStopTimer(runtime);
             pushLog(runtime, "system", `启动失败：${error.message}\n`);
@@ -909,6 +1098,7 @@ export const registerProjectFeature = (
             const stoppedByUser = runtime.stopRequested;
             runtime.child = null;
             runtime.pid = null;
+            runtime.startedAt = null;
             runtime.stopRequested = false;
             clearStopTimer(runtime);
             runtime.status = stoppedByUser || code === 0 ? "stopped" : "error";
@@ -948,6 +1138,7 @@ export const registerProjectFeature = (
         if (!runtime.child) {
             runtime.status = "stopped";
             runtime.pid = null;
+            runtime.startedAt = null;
             return;
         }
         if (runtime.status === "stopping") return;
@@ -993,6 +1184,36 @@ export const registerProjectFeature = (
             }
         }, 5000);
         runtime.stopTimer.unref?.();
+    };
+
+    const waitForProjectStop = (runtime: ProjectRuntime, timeoutMs = 8000): Promise<void> =>
+        new Promise((resolve, reject) => {
+            const startedAt = Date.now();
+            const check = () => {
+                if (!runtime.child && runtime.status !== "stopping") {
+                    resolve();
+                    return;
+                }
+                if (Date.now() - startedAt >= timeoutMs) {
+                    reject(new ProjectError(500, "项目停止超时，无法重启"));
+                    return;
+                }
+                setTimeout(check, 100);
+            };
+            check();
+        });
+
+    const restartProject = async (row: ProjectRow): Promise<ProjectRuntime> => {
+        const runtime = getRuntime(row.id);
+        if (!runtime.child || !runtime.pid) {
+            return startProject(row);
+        }
+        if (runtime.status !== "running") {
+            throw new ProjectError(409, "项目正在启动或停止，请稍后再试");
+        }
+        stopProject(runtime);
+        await waitForProjectStop(runtime);
+        return startProject(row);
     };
 
     const hasActiveCommandRuns = (projectId: number): boolean =>
@@ -1202,6 +1423,83 @@ export const registerProjectFeature = (
         res.json({ res: true, editors: editorAvailability() });
     });
 
+    projectRouter.get("/usage", async (_req, res) => {
+        try {
+            const active = [...runtimes.entries()]
+                .filter(([, runtime]) => ACTIVE_PROJECT_STATUSES.includes(runtime.status) && runtime.pid)
+                .sort((a, b) => a[0] - b[0]);
+            const rows = listProjectsStmt.all() as ProjectRow[];
+            const rowMap = new Map(rows.map((row) => [row.id, row]));
+            const table = active.length > 0 ? await readProcessTable() : null;
+            const now = Date.now();
+            const cpuCount = Math.max(1, os.cpus().length);
+
+            const usage = active.map(([projectId, runtime]) => {
+                const row = rowMap.get(projectId);
+                const pid = runtime.pid;
+                const uptimeSeconds = runtime.startedAt
+                    ? Math.max(0, Math.round((now - runtime.startedAt) / 1000))
+                    : null;
+                const base = {
+                    projectId,
+                    name: row?.name || "未命名项目",
+                    status: runtime.status,
+                    pid,
+                    uptimeSeconds,
+                };
+
+                if (!table || !pid) {
+                    return {
+                        ...base,
+                        cpuPercent: null,
+                        memoryBytes: null,
+                        memoryMb: null,
+                        processCount: 0,
+                    };
+                }
+
+                const tree = collectProcessUsage(table, pid);
+                if (!tree) {
+                    return {
+                        ...base,
+                        cpuPercent: null,
+                        memoryBytes: null,
+                        memoryMb: null,
+                        processCount: 0,
+                    };
+                }
+
+                const sampleKey = `${projectId}:${pid}`;
+                const previous = processCpuSamples.get(sampleKey);
+                let cpuPercent = 0;
+                if (previous && now > previous.at) {
+                    const deltaCpu = Math.max(0, tree.cpuMs - previous.cpuMs);
+                    const deltaTime = now - previous.at;
+                    cpuPercent = (deltaCpu / deltaTime / cpuCount) * 100;
+                }
+                processCpuSamples.set(sampleKey, { at: now, cpuMs: tree.cpuMs });
+
+                return {
+                    ...base,
+                    cpuPercent: Math.round(cpuPercent * 10) / 10,
+                    memoryBytes: tree.memoryBytes,
+                    memoryMb: Math.round((tree.memoryBytes / (1024 * 1024)) * 10) / 10,
+                    processCount: tree.processCount,
+                };
+            });
+
+            res.json({
+                res: true,
+                available: active.length === 0 || Boolean(table),
+                sampledAt: new Date(table?.at ?? now).toISOString(),
+                cpuCount,
+                usage,
+            });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
     projectRouter.post("/detect", (req, res) => {
         try {
             const detection = detectProject(req.body?.path, req.body?.type);
@@ -1358,6 +1656,20 @@ export const registerProjectFeature = (
             stopProject(runtime);
             logInfo(`[projects] stop ${id} (${row.name})`);
             res.json({ res: true, status: runtime.status, pid: runtime.pid });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
+    projectRouter.post("/:id/restart", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (!Number.isInteger(id) || id <= 0) throw new ProjectError(400, "无效的项目 ID");
+            const row = findProject(id);
+            if (!row) throw new ProjectError(404, "项目不存在");
+            const runtime = await restartProject(row);
+            logInfo(`[projects] restart ${id} (${row.name})`);
+            res.json({ res: true, project: toDto(row), status: runtime.status, pid: runtime.pid });
         } catch (error) {
             fail(res, error);
         }
