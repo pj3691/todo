@@ -41,6 +41,15 @@
         explorer: { label: "文件资源管理器" },
     };
     const DEFAULT_EDITORS_KEY = "gitstatus_project_default_editors";
+    const USAGE_COLLAPSED_KEY = "gitstatus_projects_usage_collapsed";
+
+    const readUsageCollapsed = () => {
+        try {
+            return localStorage.getItem(USAGE_COLLAPSED_KEY) === "1";
+        } catch {
+            return false;
+        }
+    };
 
     const loadDefaultEditors = () => {
         const defaults = new Map();
@@ -69,6 +78,16 @@
         expandedProjects: new Set(),
         selectedCommands: new Map(),
         defaultEditors: loadDefaultEditors(),
+        usage: [],
+        usageAvailable: true,
+        usageLoading: false,
+        usagePolling: false,
+        usageTimer: 0,
+        usageSampledAt: "",
+        usageError: "",
+        usageCollapsed: readUsageCollapsed(),
+        statusPollTimer: 0,
+        statusPolling: false,
         activeProjectId: null,
         terminalMode: "start",
         activeRunId: null,
@@ -90,6 +109,16 @@
         pageBody: document.getElementById("pageBody"),
         projectGrid: document.getElementById("projectGrid"),
         projectEmpty: document.getElementById("projectEmpty"),
+        projectsWorkspace: document.getElementById("projectsWorkspace"),
+        usageSidebar: document.getElementById("usageSidebar"),
+        usageCollapseBtn: document.getElementById("usageCollapseBtn"),
+        usageRailToggle: document.getElementById("usageRailToggle"),
+        usageRailBadge: document.getElementById("usageRailBadge"),
+        usageList: document.getElementById("usageList"),
+        usageProcessCount: document.getElementById("usageProcessCount"),
+        usageCpuTotal: document.getElementById("usageCpuTotal"),
+        usageMemoryTotal: document.getElementById("usageMemoryTotal"),
+        usageNote: document.getElementById("usageNote"),
         emptyAddProjectBtn: document.getElementById("emptyAddProjectBtn"),
         projectCount: document.getElementById("projectCount"),
         runningCount: document.getElementById("runningCount"),
@@ -151,7 +180,7 @@
             return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="#0098FF" aria-hidden="true"><path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"></path></svg>`;
         }
         if (editor === "qoder") {
-            return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 8-4 4 4 4"></path><path d="m16 8 4 4-4 4"></path><path d="m14 4-4 16"></path></svg>`;
+            return `<img class="editor-icon-image" src="/pages/assets/images/qoder-ide.png" width="${size}" height="${size}" alt="" aria-hidden="true">`;
         }
         return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path fill="#E4A33D" d="M3.5 5h5.2l2 2H20A1.5 1.5 0 0 1 21.5 8.5v9A1.5 1.5 0 0 1 20 19H4a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 4 5Z"></path><path fill="#F5C15B" d="M3.5 8h17v9.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5V8Z"></path></svg>`;
     };
@@ -182,6 +211,182 @@
         state.defaultEditors.set(id, editor);
         persistDefaultEditors();
         return true;
+    }
+
+    const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
+
+    const formatMemory = (value) => {
+        const mb = Number(value);
+        if (!Number.isFinite(mb)) return "—";
+        return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`;
+    };
+
+    const formatUptime = (value) => {
+        if (value === null || value === undefined) return "—";
+        const total = Math.max(0, Math.floor(Number(value) || 0));
+        if (total < 60) return `${total}s`;
+        const minutes = Math.floor(total / 60);
+        const hours = Math.floor(minutes / 60);
+        if (hours > 0) return `${hours}h ${minutes % 60}m`;
+        return `${minutes}m ${total % 60}s`;
+    };
+
+    function applyUsageCollapsed() {
+        const collapsed = Boolean(state.usageCollapsed);
+        el.projectsWorkspace?.classList.toggle("is-usage-collapsed", collapsed);
+        el.usageSidebar?.classList.toggle("is-collapsed", collapsed);
+        el.usageRailToggle?.setAttribute("aria-expanded", String(!collapsed));
+        el.usageCollapseBtn?.setAttribute("aria-expanded", String(!collapsed));
+    }
+
+    function setUsageCollapsed(collapsed) {
+        state.usageCollapsed = Boolean(collapsed);
+        try {
+            localStorage.setItem(USAGE_COLLAPSED_KEY, state.usageCollapsed ? "1" : "0");
+        } catch {
+            /* localStorage 不可用时只保留当前会话 */
+        }
+        applyUsageCollapsed();
+        if (!state.usageCollapsed) void loadUsage();
+    }
+
+    function updateUsageNote() {
+        if (!el.usageNote) return;
+        if (state.usageError) {
+            el.usageNote.textContent = state.usageError;
+            return;
+        }
+        if (!state.usageAvailable) {
+            el.usageNote.textContent = "当前系统无法读取进程占用（PowerShell 或 ps 不可用）。";
+            return;
+        }
+        const date = state.usageSampledAt ? new Date(state.usageSampledAt) : null;
+        const time = date && !Number.isNaN(date.getTime())
+            ? date.toLocaleTimeString("zh-CN", { hour12: false })
+            : "";
+        el.usageNote.textContent = `${time ? `最近采样 ${time} · ` : ""}每 2 秒刷新`;
+    }
+
+    function renderUsage() {
+        const usage = Array.isArray(state.usage) ? state.usage : [];
+        const cpuValues = usage
+            .map((item) => item.cpuPercent)
+            .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
+            .map(Number);
+        const memoryValues = usage
+            .map((item) => item.memoryMb)
+            .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
+            .map(Number);
+        const cpuTotal = cpuValues.reduce((sum, value) => sum + value, 0);
+        const memoryTotal = memoryValues.reduce((sum, value) => sum + value, 0);
+        const maxMemory = Math.max(1, ...memoryValues);
+
+        if (el.usageProcessCount) el.usageProcessCount.textContent = String(usage.length);
+        if (el.usageCpuTotal) el.usageCpuTotal.textContent = cpuValues.length ? `${cpuTotal.toFixed(1)}%` : "—";
+        if (el.usageMemoryTotal) el.usageMemoryTotal.textContent = memoryValues.length ? formatMemory(memoryTotal) : "—";
+        if (el.usageRailBadge) {
+            el.usageRailBadge.textContent = String(usage.length);
+            el.usageRailBadge.classList.toggle("hidden", usage.length === 0);
+        }
+
+        if (!el.usageList) return;
+        if (usage.length === 0) {
+            el.usageList.innerHTML = '<div class="usage-empty"><strong>暂无启动中的项目</strong><span>启动项目后，这里会显示进程树占用。</span></div>';
+            updateUsageNote();
+            return;
+        }
+
+        el.usageList.innerHTML = usage.map((item) => {
+            const status = statusMeta(item.status);
+            const name = escapeHtml(item.name || "未命名项目");
+            const cpu = item.cpuPercent === null || item.cpuPercent === undefined
+                ? null
+                : Number(item.cpuPercent);
+            const memory = item.memoryMb === null || item.memoryMb === undefined
+                ? null
+                : Number(item.memoryMb);
+            const cpuBar = cpu === null || !Number.isFinite(cpu) ? 0 : clampPercent(cpu);
+            const memoryBar = memory === null || !Number.isFinite(memory)
+                ? 0
+                : clampPercent((memory / maxMemory) * 100);
+            const processCount = Number(item.processCount) || 0;
+            const pid = item.pid === null || item.pid === undefined ? "—" : escapeHtml(item.pid);
+            const cpuText = cpu !== null && Number.isFinite(cpu) ? `${cpu.toFixed(1)}%` : "—";
+            const memoryText = memory !== null && Number.isFinite(memory) ? formatMemory(memory) : "—";
+            return `<article class="usage-item">
+                <div class="usage-item-head">
+                    <span class="usage-item-name" title="${name}">${name}</span>
+                    <span class="usage-item-status ${status.className}">${escapeHtml(status.label)}</span>
+                </div>
+                <div class="usage-metrics">
+                    <div class="usage-metric"><span>CPU</span><strong>${cpuText}</strong></div>
+                    <div class="usage-metric"><span>内存</span><strong>${memoryText}</strong></div>
+                </div>
+                <div class="usage-bars" aria-hidden="true">
+                    <span class="usage-bar"><i style="width:${cpuBar}%"></i></span>
+                    <span class="usage-bar is-memory"><i style="width:${memoryBar}%"></i></span>
+                </div>
+                <div class="usage-meta">
+                    <span>PID ${pid}</span>
+                    <span>${processCount} 个进程</span>
+                    <span>${formatUptime(item.uptimeSeconds)}</span>
+                </div>
+            </article>`;
+        }).join("");
+        updateUsageNote();
+    }
+
+    async function loadUsage() {
+        if (!state.user || state.usageLoading) return;
+        state.usageLoading = true;
+        try {
+            const json = await api("/projects/usage");
+            state.usage = Array.isArray(json.usage) ? json.usage : [];
+            state.usageAvailable = json.available !== false;
+            state.usageSampledAt = typeof json.sampledAt === "string" ? json.sampledAt : "";
+            state.usageError = "";
+            renderUsage();
+        } catch (error) {
+            if (error.status === 401) {
+                state.user = null;
+                stopUsagePolling();
+                renderUserUi();
+                showAuthPanel();
+            } else if (error.status === 403) {
+                stopUsagePolling();
+                showAccessPanel();
+            } else {
+                state.usageAvailable = false;
+                state.usageError = error.message || "进程占用读取失败";
+                renderUsage();
+            }
+        } finally {
+            state.usageLoading = false;
+        }
+    }
+
+    function stopUsagePolling() {
+        state.usagePolling = false;
+        if (state.usageTimer) {
+            window.clearTimeout(state.usageTimer);
+            state.usageTimer = 0;
+        }
+    }
+
+    function startUsagePolling() {
+        stopUsagePolling();
+        state.usagePolling = true;
+        const tick = async () => {
+            if (!state.usagePolling) return;
+            if (!state.user) {
+                state.usagePolling = false;
+                return;
+            }
+            if (document.visibilityState !== "hidden") await loadUsage();
+            if (!state.usagePolling) return;
+            state.usageTimer = window.setTimeout(tick, 2000);
+        };
+        state.usageTimer = window.setTimeout(tick, 200);
     }
 
     function showToast(message, type = "success") {
@@ -229,6 +434,7 @@
         el.authPanel.classList.remove("hidden");
         el.accessPanel.classList.add("hidden");
         el.pageBody.classList.add("hidden");
+        stopStatusPolling();
         closeTerminal();
         window.setTimeout(() => el.loginUsername.focus(), 40);
     }
@@ -237,6 +443,7 @@
         el.authPanel.classList.add("hidden");
         el.accessPanel.classList.remove("hidden");
         el.pageBody.classList.add("hidden");
+        stopStatusPolling();
         closeTerminal();
     }
 
@@ -303,6 +510,7 @@
         const busy = ACTIVE_STATUSES.includes(project.status);
         const canStart = !busy;
         const canStop = busy && project.status !== "stopping";
+        const canRestart = project.status === "running";
         const canEdit = !busy;
         const canDelete = !busy;
         const name = escapeHtml(project.name || "未命名项目");
@@ -358,6 +566,9 @@
                 <div class="project-head-right">
                     <div class="project-head-topline">
                         <span class="status-pill ${status.className}" title="${escapeHtml(status.label)}">${escapeHtml(status.label)}</span>
+                        <button class="project-console-btn" type="button" data-action="terminal" title="打开控制台" aria-label="打开控制台">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"></path><path d="M12 19h8"></path></svg>
+                        </button>
                         <div class="project-open-menu">
                             <div class="project-open-split">
                                 <button class="project-open-main is-${defaultEditor}" type="button" data-action="editor" data-editor="${defaultEditor}" title="${escapeHtml(defaultEditorTitle)}" aria-label="${escapeHtml(defaultEditorTitle)}"${defaultEditorAvailable ? "" : " disabled"}>
@@ -390,6 +601,7 @@
             <div class="project-quick-row">
                 <div class="project-quick-actions">
                     <button class="btn btn-sm btn-primary" type="button" data-action="start"${canStart ? "" : " disabled"}>启动</button>
+                    <button class="btn btn-sm" type="button" data-action="restart"${canRestart ? "" : " disabled"}>重启</button>
                     <button class="btn btn-sm btn-danger" type="button" data-action="stop"${canStop ? "" : " disabled"}>停止</button>
                 </div>
                 <div class="project-quick-run">
@@ -469,6 +681,42 @@
                 updateTerminalStatus(project.status, project.pid);
             }
         }
+        syncStatusPolling();
+    }
+
+    function stopStatusPolling() {
+        state.statusPolling = false;
+        if (state.statusPollTimer) {
+            window.clearTimeout(state.statusPollTimer);
+            state.statusPollTimer = 0;
+        }
+    }
+
+    function syncStatusPolling() {
+        const pending = state.projects.some(
+            (project) => project.status === "starting" || project.status === "stopping"
+        );
+        if (!pending || !state.user) {
+            stopStatusPolling();
+            return;
+        }
+        if (state.statusPolling) return;
+        state.statusPolling = true;
+        const tick = async () => {
+            state.statusPollTimer = 0;
+            if (!state.statusPolling) return;
+            await loadProjects();
+            if (!state.statusPolling) return;
+            const stillPending = state.projects.some(
+                (project) => project.status === "starting" || project.status === "stopping"
+            );
+            if (!stillPending) {
+                stopStatusPolling();
+                return;
+            }
+            state.statusPollTimer = window.setTimeout(tick, 1000);
+        };
+        state.statusPollTimer = window.setTimeout(tick, 700);
     }
 
     function updateTerminalStatus(status, pid, mode = state.terminalMode) {
@@ -604,6 +852,7 @@
         updateTerminalStatus(project.status, project.pid, "start");
         el.terminalDrawer.classList.remove("hidden");
         el.terminalDrawer.setAttribute("aria-hidden", "false");
+        el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
         void loadLogs(switched);
     }
 
@@ -633,6 +882,7 @@
             updateTerminalStatus(run.status || "running", run.pid, "run");
             el.terminalDrawer.classList.remove("hidden");
             el.terminalDrawer.setAttribute("aria-hidden", "false");
+            el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
             showToast(`正在运行：${state.activeRunName}`);
             void loadLogs(true);
         } catch (error) {
@@ -677,6 +927,7 @@
             openTerminal(projectId);
             showToast("项目已启动，正在读取终端输出");
             await loadProjects();
+            void loadUsage();
         } catch (error) {
             handleActionError(error, "启动项目失败");
         }
@@ -687,11 +938,25 @@
             await api(`/projects/${projectId}/stop`, { method: "POST" });
             showToast("正在停止项目");
             await loadProjects();
+            void loadUsage();
             if (state.activeProjectId === Number(projectId) && state.terminalMode === "start") {
                 void loadLogs(false);
             }
         } catch (error) {
             handleActionError(error, "停止项目失败");
+        }
+    }
+
+    async function restartProject(projectId) {
+        try {
+            showToast("正在重启项目");
+            await api(`/projects/${projectId}/restart`, { method: "POST" });
+            openTerminal(projectId);
+            showToast("项目已重启，正在读取终端输出");
+            await loadProjects();
+            void loadUsage();
+        } catch (error) {
+            handleActionError(error, "重启项目失败");
         }
     }
 
@@ -978,6 +1243,11 @@
         });
 
         el.refreshBtn.addEventListener("click", () => void loadProjects());
+        el.usageCollapseBtn?.addEventListener("click", () => setUsageCollapsed(true));
+        el.usageRailToggle?.addEventListener("click", () => setUsageCollapsed(false));
+        document.addEventListener("visibilitychange", () => {
+            if (state.user && document.visibilityState === "visible") void loadUsage();
+        });
         el.addProjectBtn.addEventListener("click", () => openProjectModal());
         el.emptyAddProjectBtn.addEventListener("click", () => openProjectModal());
         el.closeProjectModalBtn.addEventListener("click", closeProjectModal);
@@ -1023,6 +1293,7 @@
             if (!Number.isInteger(projectId)) return;
             const action = button.dataset.action;
             if (action === "start") void startProject(projectId);
+            else if (action === "restart") void restartProject(projectId);
             else if (action === "stop") void stopProject(projectId);
             else if (action === "terminal") openTerminal(projectId);
             else if (action === "toggle-open-menu") {
@@ -1098,12 +1369,17 @@
                 closeTerminal();
             }
         });
-        window.addEventListener("beforeunload", stopPolling);
+        window.addEventListener("beforeunload", () => {
+            stopPolling();
+            stopUsagePolling();
+            stopStatusPolling();
+        });
     }
 
     async function bootstrap() {
         bindEvents();
         bindUserMenu();
+        applyUsageCollapsed();
         state.user = await Auth.loadCurrentUser();
         renderUserUi();
         if (!state.user) {
@@ -1117,6 +1393,7 @@
         showPage();
         await loadEditors();
         await loadProjects();
+        startUsagePolling();
     }
 
     bootstrap();

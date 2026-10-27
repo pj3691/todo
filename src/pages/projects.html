@@ -107,6 +107,323 @@
             color: var(--green-strong);
         }
 
+        .projects-workspace {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 276px;
+            gap: 14px;
+            align-items: start;
+        }
+
+        .projects-column {
+            min-width: 0;
+        }
+
+        .usage-sidebar {
+            position: sticky;
+            top: 74px;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            max-height: calc(100vh - 96px);
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            box-shadow: var(--shadow-xs);
+            transition: max-width 0.18s ease;
+        }
+
+        .usage-sidebar-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 11px 11px 10px 13px;
+            border-bottom: 1px solid #eef2ee;
+            background: linear-gradient(135deg, rgba(237, 248, 241, 0.9), rgba(255, 255, 255, 0.82));
+        }
+
+        .usage-kicker {
+            display: block;
+            color: var(--green-strong);
+            font-size: 0.61rem;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            line-height: 1.2;
+            text-transform: uppercase;
+        }
+
+        .usage-sidebar-head strong {
+            display: block;
+            margin-top: 2px;
+            color: var(--text);
+            font-size: 0.86rem;
+            font-weight: 760;
+        }
+
+        .usage-collapse-btn {
+            width: 26px;
+            height: 26px;
+            flex: 0 0 auto;
+        }
+
+        .usage-sidebar-body {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .usage-overview {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1px;
+            border-bottom: 1px solid #eef2ee;
+            background: #eef2ee;
+        }
+
+        .usage-overview > div {
+            min-width: 0;
+            padding: 9px 8px;
+            background: var(--surface);
+        }
+
+        .usage-overview span {
+            display: block;
+            overflow: hidden;
+            color: var(--muted);
+            font-size: 0.62rem;
+            font-weight: 650;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .usage-overview strong {
+            display: block;
+            margin-top: 3px;
+            overflow: hidden;
+            color: var(--text);
+            font-size: 0.8rem;
+            font-weight: 760;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .usage-list {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-color: #cbd9ce transparent;
+            scrollbar-width: thin;
+        }
+
+        .usage-item {
+            min-width: 0;
+            padding: 9px 10px;
+            border: 1px solid #edf2ee;
+            border-radius: 10px;
+            background: #fbfdfb;
+        }
+
+        .usage-item-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 7px;
+        }
+
+        .usage-item-name {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text);
+            font-size: 0.76rem;
+            font-weight: 750;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .usage-item-status {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--muted);
+            font-size: 0.62rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .usage-item-status::before {
+            content: "";
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .usage-item-status.is-running {
+            color: var(--green-strong);
+        }
+
+        .usage-item-status.is-starting,
+        .usage-item-status.is-stopping {
+            color: #9a6700;
+        }
+
+        .usage-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-top: 7px;
+        }
+
+        .usage-metric span {
+            display: block;
+            color: #8d9e92;
+            font-size: 0.62rem;
+            font-weight: 650;
+        }
+
+        .usage-metric strong {
+            display: block;
+            margin-top: 1px;
+            color: var(--text-soft);
+            font-family: "Cascadia Code", Consolas, monospace;
+            font-size: 0.74rem;
+            font-weight: 700;
+        }
+
+        .usage-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            margin-top: 6px;
+        }
+
+        .usage-bar {
+            height: 4px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #edf3ee;
+        }
+
+        .usage-bar i {
+            display: block;
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--green-strong);
+            transition: width 0.35s ease;
+        }
+
+        .usage-bar.is-memory i {
+            background: #6d9dca;
+        }
+
+        .usage-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px 8px;
+            margin-top: 6px;
+            color: #8d9e92;
+            font-size: 0.62rem;
+        }
+
+        .usage-empty {
+            margin: 2px;
+            padding: 20px 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            border: 1px dashed var(--line);
+            border-radius: 10px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .usage-empty strong {
+            color: var(--text-soft);
+            font-size: 0.74rem;
+        }
+
+        .usage-empty span {
+            font-size: 0.65rem;
+            line-height: 1.45;
+        }
+
+        .usage-note {
+            margin: 0;
+            padding: 8px 11px;
+            border-top: 1px solid #eef2ee;
+            color: #93a498;
+            font-size: 0.62rem;
+            line-height: 1.45;
+        }
+
+        .usage-rail-toggle {
+            display: none;
+            position: relative;
+            width: 100%;
+            min-height: 190px;
+            padding: 10px 0;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            border: 0;
+            color: var(--muted);
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .usage-rail-toggle:hover {
+            color: var(--green-strong);
+            background: var(--green-soft);
+        }
+
+        .usage-rail-toggle span {
+            color: inherit;
+            font-size: 0.68rem;
+            font-weight: 750;
+            letter-spacing: 0.1em;
+            writing-mode: vertical-rl;
+        }
+
+        .usage-rail-badge {
+            position: absolute;
+            top: 7px;
+            right: 5px;
+            min-width: 16px;
+            padding: 1px 4px;
+            border-radius: 999px;
+            color: #fff;
+            background: var(--green-strong);
+            font-size: 0.58rem;
+            font-weight: 800;
+            line-height: 1.35;
+            text-align: center;
+        }
+
+        .usage-sidebar.is-collapsed {
+            max-height: none;
+        }
+
+        .usage-sidebar.is-collapsed .usage-sidebar-head,
+        .usage-sidebar.is-collapsed .usage-sidebar-body {
+            display: none;
+        }
+
+        .usage-sidebar.is-collapsed .usage-rail-toggle {
+            display: flex;
+        }
+
+        .projects-workspace.is-usage-collapsed {
+            grid-template-columns: minmax(0, 1fr) 44px;
+        }
+
         .project-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -167,9 +484,43 @@
             gap: 6px;
         }
 
+        .project-console-btn {
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--muted);
+            background: var(--surface);
+            box-shadow: var(--shadow-xs);
+            cursor: pointer;
+            transition: 0.16s ease;
+        }
+
+        .project-console-btn:hover {
+            color: var(--green-strong);
+            border-color: #b9d8c5;
+            background: var(--green-soft);
+        }
+
+        .project-console-btn:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.22);
+        }
+
         .project-open-menu {
             position: relative;
             z-index: 6;
+        }
+
+        .editor-icon-image {
+            display: block;
+            width: 15px;
+            height: 15px;
+            border-radius: 3px;
+            object-fit: contain;
         }
 
         .project-open-split {
@@ -893,19 +1244,18 @@
         }
 
         .terminal-drawer {
-            position: fixed;
-            right: 18px;
-            bottom: 18px;
-            z-index: 70;
-            width: min(780px, calc(100vw - 28px));
-            max-height: 56vh;
+            position: relative;
+            z-index: 5;
+            width: 100%;
+            margin-top: 14px;
+            scroll-margin-top: 80px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
             border: 1px solid #294536;
             border-radius: 14px;
             background: #0b1710;
-            box-shadow: 0 22px 60px rgba(6, 22, 13, 0.28);
+            box-shadow: 0 10px 28px rgba(6, 22, 13, 0.18);
         }
 
         .terminal-head {
@@ -1002,7 +1352,7 @@
 
         .terminal-log {
             min-height: 160px;
-            max-height: 42vh;
+            max-height: 300px;
             padding: 10px 14px 14px;
             overflow-y: auto;
             color: #d6eddd;
@@ -1037,6 +1387,40 @@
             color: #668574;
         }
 
+        @media (max-width: 1080px) {
+            .projects-workspace,
+            .projects-workspace.is-usage-collapsed {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .usage-sidebar {
+                position: static;
+                max-height: none;
+            }
+
+            .usage-sidebar.is-collapsed .usage-rail-toggle {
+                min-height: 44px;
+                padding: 9px 12px;
+                flex-direction: row;
+                justify-content: flex-start;
+                gap: 8px;
+            }
+
+            .usage-sidebar.is-collapsed .usage-rail-toggle span:not(.usage-rail-badge) {
+                writing-mode: horizontal-tb;
+                letter-spacing: 0.02em;
+            }
+
+            .usage-rail-badge {
+                position: static;
+                margin-left: auto;
+            }
+
+            .usage-list {
+                max-height: 320px;
+            }
+        }
+
         @media (max-width: 760px) {
             main.page {
                 padding: 9px 10px 32px;
@@ -1063,15 +1447,34 @@
             }
 
             .terminal-drawer {
-                right: 8px;
-                bottom: 8px;
-                width: calc(100vw - 16px);
-                max-height: 62vh;
+                margin-top: 10px;
+                border-radius: 12px;
+            }
+
+            .terminal-head {
+                padding: 9px 10px;
             }
 
             .terminal-log {
-                max-height: 48vh;
+                max-height: 240px;
             }
+        }
+
+        /* 弹窗里的表单要成为可收缩的 flex 容器，否则内容超高时 modal-body 无法滚动 */
+        #projectForm {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        #projectForm .modal-body {
+            flex: 1 1 auto;
+        }
+
+        #projectModal .modal {
+            max-height: calc(100vh - 48px);
+            max-height: calc(100dvh - 48px);
         }
 
         @media (max-width: 520px) {
@@ -1190,37 +1593,72 @@
                 <span>命令在后端机器上执行</span>
             </div>
 
-            <div class="project-grid" id="projectGrid"></div>
+            <div class="projects-workspace" id="projectsWorkspace">
+                <div class="projects-column">
+                    <div class="project-grid" id="projectGrid"></div>
 
-            <div class="project-empty hidden" id="projectEmpty">
-                <h2>还没有项目</h2>
-                <p>添加一个本地项目地址，选择类型后就可以启动、停止和查看终端输出。</p>
-                <button class="btn btn-primary" id="emptyAddProjectBtn" type="button">添加第一个项目</button>
+                    <div class="project-empty hidden" id="projectEmpty">
+                        <h2>还没有项目</h2>
+                        <p>添加一个本地项目地址，选择类型后就可以启动、停止和查看终端输出。</p>
+                        <button class="btn btn-primary" id="emptyAddProjectBtn" type="button">添加第一个项目</button>
+                    </div>
+
+                    <p class="project-hint">提示：运行命令会在后端所在机器执行；Windows 下停止项目会结束整个进程树。</p>
+                </div>
+
+                <aside class="usage-sidebar" id="usageSidebar" aria-label="启动进程资源占用">
+                    <button class="usage-rail-toggle" id="usageRailToggle" type="button" title="展开进程占用" aria-label="展开进程占用" aria-expanded="false">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"></path></svg>
+                        <span>进程占用</span>
+                        <span class="usage-rail-badge hidden" id="usageRailBadge">0</span>
+                    </button>
+                    <div class="usage-sidebar-head">
+                        <div>
+                            <span class="usage-kicker">Resources</span>
+                            <strong>启动进程</strong>
+                        </div>
+                        <button class="icon-btn usage-collapse-btn" id="usageCollapseBtn" type="button" title="收起进程占用" aria-label="收起进程占用侧边栏" aria-expanded="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+                        </button>
+                    </div>
+                    <div class="usage-sidebar-body" id="usageSidebarBody">
+                        <div class="usage-overview">
+                            <div><span>启动项目</span><strong id="usageProcessCount">0</strong></div>
+                            <div><span>CPU 总计</span><strong id="usageCpuTotal">—</strong></div>
+                            <div><span>内存总计</span><strong id="usageMemoryTotal">—</strong></div>
+                        </div>
+                        <div class="usage-list" id="usageList" aria-live="polite">
+                            <div class="usage-empty">
+                                <strong>暂无启动中的项目</strong>
+                                <span>启动项目后，这里会显示进程树占用。</span>
+                            </div>
+                        </div>
+                        <p class="usage-note" id="usageNote">每 2 秒采样一次启动进程的 CPU 和内存占用。</p>
+                    </div>
+                </aside>
             </div>
 
-            <p class="project-hint">提示：运行命令会在后端所在机器执行；Windows 下停止项目会结束整个进程树。</p>
+            <aside class="terminal-drawer hidden" id="terminalDrawer" aria-hidden="true" aria-label="项目终端">
+                <div class="terminal-head">
+                    <div class="terminal-title">
+                        <span class="terminal-kicker">Terminal</span>
+                        <strong id="terminalProjectName">—</strong>
+                        <span class="status-pill is-stopped" id="terminalStatus">已停止</span>
+                        <span class="project-pid" id="terminalPid"></span>
+                    </div>
+                    <div class="terminal-actions">
+                        <button class="btn hidden" id="terminalStopRunBtn" type="button">停止命令</button>
+                        <button class="btn" id="terminalClearBtn" type="button">清空</button>
+                        <button class="icon-btn" id="terminalCloseBtn" type="button" aria-label="关闭终端">✕</button>
+                    </div>
+                </div>
+                <div class="terminal-command" id="terminalCommand">—</div>
+                <div class="terminal-log" id="terminalLog" role="log" aria-live="polite">
+                    <span class="terminal-placeholder">选择项目后在这里查看输出</span>
+                </div>
+            </aside>
         </div>
     </main>
-
-    <aside class="terminal-drawer hidden" id="terminalDrawer" aria-hidden="true" aria-label="项目终端">
-        <div class="terminal-head">
-            <div class="terminal-title">
-                <span class="terminal-kicker">Terminal</span>
-                <strong id="terminalProjectName">—</strong>
-                <span class="status-pill is-stopped" id="terminalStatus">已停止</span>
-                <span class="project-pid" id="terminalPid"></span>
-            </div>
-            <div class="terminal-actions">
-                <button class="btn hidden" id="terminalStopRunBtn" type="button">停止命令</button>
-                <button class="btn" id="terminalClearBtn" type="button">清空</button>
-                <button class="icon-btn" id="terminalCloseBtn" type="button" aria-label="关闭终端">✕</button>
-            </div>
-        </div>
-        <div class="terminal-command" id="terminalCommand">—</div>
-        <div class="terminal-log" id="terminalLog" role="log" aria-live="polite">
-            <span class="terminal-placeholder">选择项目后在这里查看输出</span>
-        </div>
-    </aside>
 
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="false"></div>
 
