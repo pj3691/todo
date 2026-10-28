@@ -41,13 +41,83 @@
         explorer: { label: "文件资源管理器" },
     };
     const DEFAULT_EDITORS_KEY = "gitstatus_project_default_editors";
+    const FOLDER_DEFAULT_EDITORS_KEY = "gitstatus_project_folder_default_editors";
     const USAGE_COLLAPSED_KEY = "gitstatus_projects_usage_collapsed";
+    const FOLDER_COLLAPSED_KEY = "gitstatus_project_folders_collapsed";
+    const ONE_SHOT_KEY = "gitstatus_projects_oneshot_ids";
+
+    const readOneShotIds = () => {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(ONE_SHOT_KEY) || "[]");
+            if (!Array.isArray(parsed)) return [];
+            return [...new Set(
+                parsed
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isInteger(value) && value > 0)
+            )];
+        } catch {
+            return [];
+        }
+    };
+
+    const persistOneShotIds = (ids) => {
+        try {
+            localStorage.setItem(ONE_SHOT_KEY, JSON.stringify(ids));
+        } catch {
+            /* localStorage 不可用时只保留当前会话 */
+        }
+    };
+
+    const readCollapsedFolders = () => {
+        try {
+            const raw = localStorage.getItem(FOLDER_COLLAPSED_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value)) : []);
+        } catch {
+            return new Set();
+        }
+    };
+
+    const persistCollapsedFolders = (folders) => {
+        try {
+            localStorage.setItem(FOLDER_COLLAPSED_KEY, JSON.stringify([...folders]));
+        } catch {
+            /* localStorage 不可用时只保留当前会话状态 */
+        }
+    };
 
     const readUsageCollapsed = () => {
         try {
             return localStorage.getItem(USAGE_COLLAPSED_KEY) === "1";
         } catch {
             return false;
+        }
+    };
+
+    const loadDefaultFolderEditors = () => {
+        const defaults = new Map();
+        try {
+            const raw = localStorage.getItem(FOLDER_DEFAULT_EDITORS_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (parsed && typeof parsed === "object") {
+                Object.entries(parsed).forEach(([name, editor]) => {
+                    if (EDITOR_META[editor]) defaults.set(name, editor);
+                });
+            }
+        } catch {
+            /* localStorage 不可用时使用默认资源管理器 */
+        }
+        return defaults;
+    };
+
+    const persistFolderDefaultEditors = () => {
+        try {
+            localStorage.setItem(
+                FOLDER_DEFAULT_EDITORS_KEY,
+                JSON.stringify(Object.fromEntries(state.defaultFolderEditors))
+            );
+        } catch {
+            /* localStorage 不可用 */
         }
     };
 
@@ -73,11 +143,18 @@
     const state = {
         user: null,
         projects: [],
+        folders: new Map(),
         editors: { vscode: true, qoder: true, explorer: true },
         editingId: null,
+        editingFolderName: null,
+        draggingProjectId: null,
+        draggingFolderName: null,
+        folderDropAfter: false,
         expandedProjects: new Set(),
         selectedCommands: new Map(),
+        selectedLinks: new Map(),
         defaultEditors: loadDefaultEditors(),
+        defaultFolderEditors: loadDefaultFolderEditors(),
         usage: [],
         usageAvailable: true,
         usageLoading: false,
@@ -86,6 +163,9 @@
         usageSampledAt: "",
         usageError: "",
         usageCollapsed: readUsageCollapsed(),
+        oneShotIds: readOneShotIds(),
+        portUsagePort: 0,
+        collapsedFolders: readCollapsedFolders(),
         statusPollTimer: 0,
         statusPolling: false,
         activeProjectId: null,
@@ -97,6 +177,9 @@
         pollTimer: 0,
         loading: false,
     };
+
+    // 应用内确认弹窗的 Promise resolver（同一时间只允许一个）
+    let confirmResolver = null;
 
     const el = {
         authPanel: document.getElementById("authPanel"),
@@ -124,6 +207,7 @@
         runningCount: document.getElementById("runningCount"),
         refreshBtn: document.getElementById("refreshBtn"),
         toggleAllProjectsBtn: document.getElementById("toggleAllProjectsBtn"),
+        addFolderBtn: document.getElementById("addFolderBtn"),
         addProjectBtn: document.getElementById("addProjectBtn"),
         terminalDrawer: document.getElementById("terminalDrawer"),
         terminalProjectName: document.getElementById("terminalProjectName"),
@@ -141,14 +225,59 @@
         projectPath: document.getElementById("projectPath"),
         projectName: document.getElementById("projectName"),
         projectType: document.getElementById("projectType"),
+        projectFolder: document.getElementById("projectFolder"),
+        projectFolderOptions: document.getElementById("projectFolderOptions"),
         projectStartCommand: document.getElementById("projectStartCommand"),
+        projectIntro: document.getElementById("projectIntro"),
+        projectEditNotice: document.getElementById("projectEditNotice"),
         runCommandRows: document.getElementById("runCommandRows"),
         addRunCommandBtn: document.getElementById("addRunCommandBtn"),
+        projectLinkRows: document.getElementById("projectLinkRows"),
+        addProjectLinkBtn: document.getElementById("addProjectLinkBtn"),
         detectProjectBtn: document.getElementById("detectProjectBtn"),
+        pickProjectPathBtn: document.getElementById("pickProjectPathBtn"),
+        pickFolderPathBtn: document.getElementById("pickFolderPathBtn"),
         projectError: document.getElementById("projectError"),
         closeProjectModalBtn: document.getElementById("closeProjectModalBtn"),
         cancelProjectBtn: document.getElementById("cancelProjectBtn"),
         saveProjectBtn: document.getElementById("saveProjectBtn"),
+        folderModal: document.getElementById("folderModal"),
+        folderForm: document.getElementById("folderForm"),
+        folderModalKicker: document.getElementById("folderModalKicker"),
+        folderModalTitle: document.getElementById("folderModalTitle"),
+        folderModalHint: document.getElementById("folderModalHint"),
+        folderName: document.getElementById("folderName"),
+        folderPath: document.getElementById("folderPath"),
+        folderError: document.getElementById("folderError"),
+        closeFolderModalBtn: document.getElementById("closeFolderModalBtn"),
+        cancelFolderBtn: document.getElementById("cancelFolderBtn"),
+        saveFolderBtn: document.getElementById("saveFolderBtn"),
+        portToolBtn: document.getElementById("portToolBtn"),
+        portModal: document.getElementById("portModal"),
+        portQueryForm: document.getElementById("portQueryForm"),
+        portInput: document.getElementById("portInput"),
+        portQueryBtn: document.getElementById("portQueryBtn"),
+        portError: document.getElementById("portError"),
+        portResult: document.getElementById("portResult"),
+        closePortModalBtn: document.getElementById("closePortModalBtn"),
+        closePortModalFooterBtn: document.getElementById("closePortModalFooterBtn"),
+        oneShotConfigBtn: document.getElementById("oneShotConfigBtn"),
+        oneShotStartBtn: document.getElementById("oneShotStartBtn"),
+        oneShotModal: document.getElementById("oneShotModal"),
+        oneShotList: document.getElementById("oneShotList"),
+        oneShotCount: document.getElementById("oneShotCount"),
+        oneShotSelectAllBtn: document.getElementById("oneShotSelectAllBtn"),
+        oneShotClearBtn: document.getElementById("oneShotClearBtn"),
+        oneShotError: document.getElementById("oneShotError"),
+        closeOneShotModalBtn: document.getElementById("closeOneShotModalBtn"),
+        cancelOneShotBtn: document.getElementById("cancelOneShotBtn"),
+        saveOneShotBtn: document.getElementById("saveOneShotBtn"),
+        confirmModal: document.getElementById("confirmModal"),
+        confirmModalTitle: document.getElementById("confirmModalTitle"),
+        confirmModalText: document.getElementById("confirmModalText"),
+        confirmActionBtn: document.getElementById("confirmActionBtn"),
+        cancelConfirmBtn: document.getElementById("cancelConfirmBtn"),
+        closeConfirmModalBtn: document.getElementById("closeConfirmModalBtn"),
         toastContainer: document.getElementById("toastContainer"),
         userMenu: document.getElementById("userMenu"),
         userTrigger: document.getElementById("userTrigger"),
@@ -193,6 +322,20 @@
         return ["vscode", "qoder", "explorer"].find(editorAvailable) || "vscode";
     }
 
+    function defaultFolderEditorFor(folderName) {
+        const stored = state.defaultFolderEditors.get(folderName);
+        if (stored && editorAvailable(stored)) return stored;
+        return ["explorer", "vscode", "qoder"].find(editorAvailable) || "explorer";
+    }
+
+    function setFolderDefaultEditor(folderName, editor) {
+        if (!editorAvailable(editor)) return false;
+        if (state.defaultFolderEditors.get(folderName) === editor) return false;
+        state.defaultFolderEditors.set(folderName, editor);
+        persistFolderDefaultEditors();
+        return true;
+    }
+
     function persistDefaultEditors() {
         try {
             localStorage.setItem(
@@ -219,6 +362,14 @@
         const mb = Number(value);
         if (!Number.isFinite(mb)) return "—";
         return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`;
+    };
+
+    const formatCpuPercent = (value) => {
+        if (value === null || value === undefined) return "—";
+        const percent = Number(value);
+        if (!Number.isFinite(percent)) return "—";
+        if (percent > 0 && percent < 0.01) return "<0.01%";
+        return `${percent.toFixed(2)}%`;
     };
 
     const formatUptime = (value) => {
@@ -264,7 +415,7 @@
         const time = date && !Number.isNaN(date.getTime())
             ? date.toLocaleTimeString("zh-CN", { hour12: false })
             : "";
-        el.usageNote.textContent = `${time ? `最近采样 ${time} · ` : ""}每 2 秒刷新`;
+        el.usageNote.textContent = `${time ? `最近采样 ${time} · ` : ""}CPU 为整机占比，每 2 秒刷新`;
     }
 
     function renderUsage() {
@@ -280,9 +431,11 @@
         const cpuTotal = cpuValues.reduce((sum, value) => sum + value, 0);
         const memoryTotal = memoryValues.reduce((sum, value) => sum + value, 0);
         const maxMemory = Math.max(1, ...memoryValues);
+        // CPU 是整机占比，绝对值很小，进度条按本次最大值归一化才有可见差异
+        const maxCpu = Math.max(0.01, ...cpuValues);
 
         if (el.usageProcessCount) el.usageProcessCount.textContent = String(usage.length);
-        if (el.usageCpuTotal) el.usageCpuTotal.textContent = cpuValues.length ? `${cpuTotal.toFixed(1)}%` : "—";
+        if (el.usageCpuTotal) el.usageCpuTotal.textContent = cpuValues.length ? formatCpuPercent(cpuTotal) : "—";
         if (el.usageMemoryTotal) el.usageMemoryTotal.textContent = memoryValues.length ? formatMemory(memoryTotal) : "—";
         if (el.usageRailBadge) {
             el.usageRailBadge.textContent = String(usage.length);
@@ -305,13 +458,13 @@
             const memory = item.memoryMb === null || item.memoryMb === undefined
                 ? null
                 : Number(item.memoryMb);
-            const cpuBar = cpu === null || !Number.isFinite(cpu) ? 0 : clampPercent(cpu);
+            const cpuBar = cpu === null || !Number.isFinite(cpu) ? 0 : clampPercent((cpu / maxCpu) * 100);
             const memoryBar = memory === null || !Number.isFinite(memory)
                 ? 0
                 : clampPercent((memory / maxMemory) * 100);
             const processCount = Number(item.processCount) || 0;
             const pid = item.pid === null || item.pid === undefined ? "—" : escapeHtml(item.pid);
-            const cpuText = cpu !== null && Number.isFinite(cpu) ? `${cpu.toFixed(1)}%` : "—";
+            const cpuText = cpu !== null && Number.isFinite(cpu) ? formatCpuPercent(cpu) : "—";
             const memoryText = memory !== null && Number.isFinite(memory) ? formatMemory(memory) : "—";
             return `<article class="usage-item">
                 <div class="usage-item-head">
@@ -382,7 +535,10 @@
                 state.usagePolling = false;
                 return;
             }
-            if (document.visibilityState !== "hidden") await loadUsage();
+            // 弹窗打开时暂停刷新占用：侧栏是整体重绘，会和弹窗滚动抢帧
+            if (document.visibilityState !== "hidden" && !document.body.classList.contains("modal-open")) {
+                await loadUsage();
+            }
             if (!state.usagePolling) return;
             state.usageTimer = window.setTimeout(tick, 2000);
         };
@@ -508,21 +664,29 @@
         const projectId = Number(project.id);
         const status = statusMeta(project.status);
         const busy = ACTIVE_STATUSES.includes(project.status);
-        const canStart = !busy;
-        const canStop = busy && project.status !== "stopping";
         const canRestart = project.status === "running";
-        const canEdit = !busy;
         const canDelete = !busy;
+        const runMode = ["running", "starting", "stopping"].includes(project.status) ? "stop" : "start";
+        const runDisabled = project.status === "stopping";
+        const runTitle = project.status === "stopping"
+            ? "停止中…"
+            : runMode === "stop"
+                ? project.status === "starting" ? "停止启动中的项目" : "停止项目"
+                : "启动项目";
         const name = escapeHtml(project.name || "未命名项目");
         const projectPath = escapeHtml(project.path || "—");
         const startCommand = String(project.startCommand || project.command || "").trim();
         const runCommands = Array.isArray(project.runCommands) ? project.runCommands : [];
+        const links = Array.isArray(project.links) ? project.links : [];
+        const intro = String(project.intro || "").trim();
         const typeLabel = TYPE_LABELS[project.type] || project.typeLabel || project.type || "自定义";
         const pid = project.pid ? `PID ${escapeHtml(project.pid)}` : "";
         const expanded = state.expandedProjects.has(projectId);
         const storedCommandId = String(state.selectedCommands.get(projectId) || "");
         const selectedCommand = runCommands.find((item) => String(item.id) === storedCommandId) || runCommands[0];
         const selectedCommandId = selectedCommand ? String(selectedCommand.id) : "";
+        const storedLinkId = String(state.selectedLinks.get(projectId) || "");
+        const selectedLink = links.find((item) => String(item.id) === storedLinkId) || links[0];
         const defaultEditor = defaultEditorFor(projectId);
         const defaultEditorAvailable = editorAvailable(defaultEditor);
         const defaultEditorLabel = EDITOR_META[defaultEditor].label;
@@ -535,13 +699,72 @@
             ? '<span class="project-open-default">（默认）</span>'
             : "";
         const editorTitle = (available, label) => available ? `用 ${label} 打开` : `未检测到 ${label} 命令行工具`;
-        const commandOptions = runCommands.length
-            ? runCommands.map((item) => {
-                const commandId = String(item.id);
-                const label = `${item.name || "命令"} — ${item.command || ""}`;
-                return `<option value="${escapeHtml(commandId)}"${commandId === selectedCommandId ? " selected" : ""}>${escapeHtml(label)}</option>`;
-            }).join("")
-            : '<option value="">暂无运行命令</option>';
+        // 触发器只显示名称，下拉里才展开完整命令；触发器自带一个快速运行按钮。
+        const commandMenuHtml = runCommands.length
+            ? `<div class="project-picker project-command-picker" data-command-picker>
+                <div class="project-picker-trigger">
+                    <button class="project-picker-toggle" type="button" data-action="toggle-command-picker" title="${escapeHtml(selectedCommand?.command || "")}" aria-haspopup="listbox" aria-expanded="false">
+                        <span class="project-picker-label">${escapeHtml(selectedCommand?.name || selectedCommand?.command || "命令")}</span>
+                        <svg class="project-picker-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                    </button>
+                    <button class="project-picker-quick" type="button" data-action="run-command" data-command-id="${Number(selectedCommand?.id || 0)}" title="运行：${escapeHtml(selectedCommand?.command || "")}" aria-label="运行当前命令">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"></path></svg>
+                    </button>
+                </div>
+                <div class="project-picker-menu hidden" role="listbox">
+                    ${runCommands.map((item) => {
+                        const commandId = String(item.id);
+                        const isSelected = commandId === selectedCommandId;
+                        return `<div class="project-picker-option${isSelected ? " is-selected" : ""}" role="option" aria-selected="${isSelected ? "true" : "false"}">
+                            <button class="project-picker-option-main" type="button" data-action="select-command" data-command-id="${Number(item.id)}" title="选择：${escapeHtml(item.command || item.name || "")}">
+                                <span class="project-picker-option-name">${escapeHtml(item.name || "命令")}</span>
+                                <code class="project-picker-option-detail">${escapeHtml(item.command || "")}</code>
+                            </button>
+                            <button class="project-picker-option-action" type="button" data-action="run-command" data-command-id="${Number(item.id)}" title="运行：${escapeHtml(item.command || item.name || "")}" aria-label="运行命令">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"></path></svg>
+                            </button>
+                        </div>`;
+                    }).join("")}
+                </div>
+            </div>`
+            : "";
+        // 项目地址：触发器自带一个用默认浏览器打开的按钮；下拉里可切换地址。
+        const linkMenuHtml = links.length
+            ? `<div class="project-picker project-link-picker" data-link-picker>
+                <div class="project-picker-trigger">
+                    <button class="project-picker-toggle" type="button" data-action="toggle-link-picker" title="${escapeHtml(selectedLink?.url || "")}" aria-haspopup="listbox" aria-expanded="false">
+                        <svg class="project-picker-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1L11 4.9"></path><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1L13 19"></path></svg>
+                        <span class="project-picker-label">${escapeHtml(selectedLink?.name || selectedLink?.url || "项目地址")}</span>
+                        <svg class="project-picker-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                    </button>
+                    <button class="project-picker-quick" type="button" data-action="open-link" data-link-id="${Number(selectedLink?.id || 0)}" title="用默认浏览器打开：${escapeHtml(selectedLink?.url || "")}" aria-label="用默认浏览器打开">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path></svg>
+                    </button>
+                </div>
+                <div class="project-picker-menu hidden" role="listbox">
+                    ${links.map((item) => {
+                        const linkId = String(item.id);
+                        const isSelected = linkId === String(selectedLink?.id ?? "");
+                        return `<div class="project-picker-option${isSelected ? " is-selected" : ""}" role="option" aria-selected="${isSelected ? "true" : "false"}">
+                            <button class="project-picker-option-main" type="button" data-action="select-link" data-link-id="${Number(item.id)}" title="选择：${escapeHtml(item.url || "")}">
+                                <span class="project-picker-option-name">${escapeHtml(item.name || item.url || "地址")}</span>
+                                <code class="project-picker-option-detail">${escapeHtml(item.url || "")}</code>
+                            </button>
+                            <button class="project-picker-option-action" type="button" data-action="open-link" data-link-id="${Number(item.id)}" title="用默认浏览器打开：${escapeHtml(item.url || "")}" aria-label="用默认浏览器打开链接">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path></svg>
+                            </button>
+                        </div>`;
+                    }).join("")}
+                </div>
+            </div>`
+            : "";
+        // 项目介绍是单条文本，只在展开的详情里展示。
+        const introHtml = intro
+            ? `<div class="project-detail-section project-detail-intro">
+                <div class="project-detail-section-head"><strong>项目介绍</strong></div>
+                <p class="project-intro-text">${escapeHtml(intro)}</p>
+            </div>`
+            : "";
         const runCommandHtml = runCommands.length
             ? `<div class="run-command-list">${runCommands.map((item) => {
                 const commandName = escapeHtml(item.name || item.command || "命令");
@@ -554,7 +777,7 @@
             }).join("")}</div>`
             : '<p class="run-command-empty">暂无运行命令，编辑项目添加</p>';
 
-        return `<article class="project-card${busy ? " is-running" : ""}${project.status === "error" ? " is-error" : ""}${expanded ? " is-expanded" : ""}" data-project-id="${projectId}">
+        return `<article class="project-card${busy ? " is-running" : ""}${project.status === "error" ? " is-error" : ""}${expanded ? " is-expanded" : ""}" data-project-id="${projectId}" draggable="true">
             <div class="project-card-head">
                 <div class="project-title-wrap">
                     <h3 class="project-title" title="${name}">${name}</h3>
@@ -566,6 +789,15 @@
                 <div class="project-head-right">
                     <div class="project-head-topline">
                         <span class="status-pill ${status.className}" title="${escapeHtml(status.label)}">${escapeHtml(status.label)}</span>
+                        <button class="project-icon-btn project-edit-btn" type="button" data-action="edit" title="编辑项目" aria-label="编辑项目">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                        </button>
+                        <button class="project-icon-btn project-delete-btn" type="button" data-action="delete" title="${canDelete ? "删除项目" : "请先停止项目再删除"}" aria-label="删除项目">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg>
+                        </button>
+                        <button class="project-icon-btn project-details-toggle${expanded ? " is-expanded" : ""}" type="button" data-action="toggle-details" title="${expanded ? "收起详情" : "展开详情"}" aria-label="${expanded ? "收起详情" : "展开详情"}" aria-expanded="${expanded ? "true" : "false"}">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 7.5h.01"></path></svg>
+                        </button>
                         <button class="project-console-btn" type="button" data-action="terminal" title="打开控制台" aria-label="打开控制台">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"></path><path d="M12 19h8"></path></svg>
                         </button>
@@ -600,15 +832,19 @@
 
             <div class="project-quick-row">
                 <div class="project-quick-actions">
-                    <button class="btn btn-sm btn-primary" type="button" data-action="start"${canStart ? "" : " disabled"}>启动</button>
-                    <button class="btn btn-sm" type="button" data-action="restart"${canRestart ? "" : " disabled"}>重启</button>
-                    <button class="btn btn-sm btn-danger" type="button" data-action="stop"${canStop ? "" : " disabled"}>停止</button>
+                    <button class="project-icon-btn project-run-toggle is-${runMode}" type="button" data-action="toggle-run" title="${runTitle}" aria-label="${runTitle}"${runDisabled ? " disabled" : ""}>
+                        ${runMode === "stop"
+                            ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>'
+                            : '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"></path></svg>'}
+                    </button>
+                    <button class="project-icon-btn project-restart-toggle" type="button" data-action="restart" title="重启项目" aria-label="重启项目"${canRestart ? "" : " disabled"}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5"></path><path d="M20 4v7h-7"></path></svg>
+                    </button>
                 </div>
                 <div class="project-quick-run">
-                    <select class="project-command-select" data-command-select aria-label="选择运行命令"${runCommands.length ? "" : " disabled"}>${commandOptions}</select>
-                    <button class="btn btn-sm" type="button" data-action="run-selected"${runCommands.length ? "" : " disabled"}>运行</button>
+                    ${commandMenuHtml}
+                    ${linkMenuHtml}
                 </div>
-                <button class="btn project-detail-toggle" type="button" data-action="toggle-details" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "收起" : "详情"}</button>
             </div>
 
             <div class="project-details${expanded ? "" : " hidden"}">
@@ -622,17 +858,118 @@
                         <span class="project-detail-value">${pid || "未运行"}</span>
                     </div>
                 </div>
+                ${introHtml}
                 <div class="project-detail-section">
                     <div class="project-detail-section-head"><strong>运行命令</strong><span>${runCommands.length} 条</span></div>
                     ${runCommandHtml}
                 </div>
                 <div class="project-detail-actions">
                     <button class="btn btn-sm" type="button" data-action="terminal">启动终端</button>
-                    <button class="btn btn-sm" type="button" data-action="edit"${canEdit ? "" : " disabled"}>编辑</button>
-                    <button class="btn btn-sm btn-danger" type="button" data-action="delete"${canDelete ? "" : " disabled"}>删除</button>
+                    <button class="btn btn-sm" type="button" data-action="edit">编辑</button>
+                    <button class="btn btn-sm btn-danger" type="button" data-action="delete">删除</button>
                 </div>
             </div>
         </article>`;
+    }
+
+    function refreshFolderOptions() {
+        if (!el.projectFolderOptions) return;
+        const folders = [...new Set([
+            ...state.folders.keys(),
+            ...state.projects
+                .map((project) => String(project.folder || "").trim())
+                .filter(Boolean),
+        ])].sort((a, b) => a.localeCompare(b, "zh-CN"));
+        el.projectFolderOptions.innerHTML = folders
+            .map((folder) => `<option value="${escapeHtml(folder)}"></option>`)
+            .join("");
+    }
+
+    function folderNamesInOrder() {
+        const ordered = [...state.folders.values()]
+            .sort((a, b) => {
+                const orderDiff = (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0);
+                return orderDiff || a.name.localeCompare(b.name, "zh-CN");
+            })
+            .map((folder) => folder.name);
+        const extras = [...new Set(
+            state.projects
+                .map((project) => String(project.folder || "").trim())
+                .filter((name) => name && !state.folders.has(name))
+        )].sort((a, b) => a.localeCompare(b, "zh-CN"));
+        return [...new Set([...ordered, ...extras])];
+    }
+
+    function folderSectionHtml(folder, projects) {
+        const key = String(folder || "");
+        const info = key ? state.folders.get(key) : null;
+        const folderPath = String(info?.path || "");
+        const collapsed = state.collapsedFolders.has(key);
+        const running = projects.filter((project) => ACTIVE_STATUSES.includes(project.status)).length;
+        const title = key || "未分组";
+        const meta = `${projects.length} 个项目${running > 0 ? ` · <span class="is-running-text">${running} 个运行中</span>` : ""}`;
+        const pathText = key ? (folderPath || "未设置路径") : "拖入项目可移出文件夹";
+        const defaultEditor = key ? defaultFolderEditorFor(key) : "explorer";
+        const defaultEditorLabel = EDITOR_META[defaultEditor].label;
+        const folderDefaultBadge = (editor) => editor === defaultEditor
+            ? '<span class="project-open-default">（默认）</span>'
+            : "";
+        const folderEditorTitle = (editor, label) => {
+            if (!folderPath) return "请先在文件夹设置中填写路径";
+            return editorAvailable(editor) ? `用 ${label} 打开文件夹` : `未检测到 ${label} 命令行工具`;
+        };
+        const folderOpenOption = (editor, label) => {
+            const disabled = !folderPath || !editorAvailable(editor);
+            return `<button class="project-open-option" type="button" role="menuitem" data-folder-action="open" data-editor="${editor}" title="${escapeHtml(folderEditorTitle(editor, label))}"${disabled ? " disabled" : ""}>
+                ${editorIcon(editor)}
+                <span>${escapeHtml(label)}${folderDefaultBadge(editor)}</span>
+            </button>`;
+        };
+        const mainEditorAvailable = editorAvailable(defaultEditor);
+        const mainOpenDisabled = !folderPath || !mainEditorAvailable;
+        const mainOpenTitle = folderEditorTitle(defaultEditor, defaultEditorLabel);
+        const actions = key
+            ? `<div class="project-folder-actions">
+                    <div class="project-open-menu folder-open-menu">
+                        <div class="project-open-split">
+                            <button class="project-open-main is-${defaultEditor}" type="button" data-folder-action="open" data-editor="${defaultEditor}" title="${escapeHtml(mainOpenTitle)}" aria-label="${escapeHtml(mainOpenTitle)}"${mainOpenDisabled ? " disabled" : ""}>${editorIcon(defaultEditor)}</button>
+                            <button class="project-open-caret" type="button" data-folder-action="toggle-open-menu" title="选择打开方式" aria-label="选择打开方式" aria-haspopup="menu" aria-expanded="false"${folderPath ? "" : " disabled"}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                            </button>
+                        </div>
+                        <div class="project-open-dropdown hidden" role="menu">
+                            ${folderOpenOption("explorer", "文件资源管理器")}
+                            ${folderOpenOption("vscode", "VS Code")}
+                            ${folderOpenOption("qoder", "Qoder IDE")}
+                        </div>
+                    </div>
+                    <button class="project-folder-action is-settings" type="button" data-folder-action="settings" title="文件夹设置" aria-label="文件夹设置">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                    </button>
+                    <button class="project-folder-action is-add-project" type="button" data-folder-action="add-project" title="在「${escapeHtml(title)}」中新建项目" aria-label="在${escapeHtml(title)}中新建项目">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                    </button>
+                </div>`
+            : "";
+        const body = projects.length > 0
+            ? `<div class="project-grid">${projects.map(projectCardHtml).join("")}</div>`
+            : `<div class="project-folder-empty">${key ? "拖入项目即可归到此文件夹" : "拖到这里可移出文件夹"}</div>`;
+        return `<section class="project-folder${key ? "" : " is-ungrouped"}${collapsed ? " is-collapsed" : ""}" data-folder="${escapeHtml(key)}">
+            <div class="project-folder-head">
+                ${key ? `<span class="project-folder-grip" data-folder-grip draggable="true" title="拖动调整文件夹顺序" aria-label="拖动调整文件夹顺序"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.2"></circle><circle cx="9" cy="3" r="1.2"></circle><circle cx="3" cy="8" r="1.2"></circle><circle cx="9" cy="8" r="1.2"></circle><circle cx="3" cy="13" r="1.2"></circle><circle cx="9" cy="13" r="1.2"></circle></svg></span>` : ""}
+                <button class="project-folder-toggle" type="button" data-folder-toggle aria-expanded="${collapsed ? "false" : "true"}">
+                    <svg class="project-folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                    <span class="project-folder-title-wrap">
+                        <span class="project-folder-name" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+                        <span class="project-folder-path" title="${escapeHtml(pathText)}">${escapeHtml(pathText)}</span>
+                    </span>
+                    <span class="project-folder-meta">${meta}</span>
+                    <svg class="project-folder-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                ${actions}
+            </div>
+            <div class="project-folder-body">${body}</div>
+        </section>`;
     }
 
     function updateCollapseButton() {
@@ -650,9 +987,59 @@
         });
     }
 
+    function closePickers() {
+        document.querySelectorAll(".project-picker.is-open").forEach((picker) => {
+            picker.classList.remove("is-open");
+            picker.querySelector(".project-picker-menu")?.classList.add("hidden");
+            picker.querySelector(".project-picker-trigger")?.setAttribute("aria-expanded", "false");
+        });
+    }
+
+    function togglePicker(picker) {
+        if (!picker) return;
+        const wasOpen = picker.classList.contains("is-open");
+        closePickers();
+        closeOpenMenus();
+        if (wasOpen) return;
+        picker.classList.add("is-open");
+        picker.querySelector(".project-picker-menu")?.classList.remove("hidden");
+        picker.querySelector(".project-picker-trigger")?.setAttribute("aria-expanded", "true");
+    }
+
+    // 选中后只更新触发器（名称 + hover 完整文本），避免整页重绘丢焦点。
+    function applyPickerSelection(picker, option) {
+        if (!picker || !option) return;
+        picker.querySelectorAll(".project-picker-option").forEach((item) => {
+            const active = item === option;
+            item.classList.toggle("is-selected", active);
+            item.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        const trigger = picker.querySelector(".project-picker-trigger");
+        const label = trigger?.querySelector(".project-picker-label");
+        const nameText = option.querySelector(".project-picker-option-name")?.textContent || "";
+        const detailText = option.querySelector(".project-picker-option-detail")?.textContent || "";
+        if (label) label.textContent = nameText;
+        if (trigger) trigger.title = detailText;
+        // 快速按钮跟着切换目标，避免选完仍指向旧命令/旧地址
+        const quick = picker.querySelector(".project-picker-quick");
+        if (quick) {
+            const commandId = option.querySelector("[data-command-id]")?.dataset.commandId;
+            const linkId = option.querySelector("[data-link-id]")?.dataset.linkId;
+            if (commandId) {
+                quick.dataset.commandId = commandId;
+                quick.title = `运行：${detailText}`;
+            }
+            if (linkId) {
+                quick.dataset.linkId = linkId;
+                quick.title = `用默认浏览器打开：${detailText}`;
+            }
+        }
+    }
+
     function toggleOpenMenu(menu) {
         const wasOpen = menu.classList.contains("is-open");
         closeOpenMenus();
+        closePickers();
         if (wasOpen) return;
         menu.classList.add("is-open");
         menu.querySelector(".project-open-caret")?.setAttribute("aria-expanded", "true");
@@ -669,10 +1056,33 @@
         for (const id of state.selectedCommands.keys()) {
             if (!currentIds.has(id)) state.selectedCommands.delete(id);
         }
+        for (const id of state.selectedLinks.keys()) {
+            if (!currentIds.has(id)) state.selectedLinks.delete(id);
+        }
         el.projectCount.textContent = String(count);
         el.runningCount.textContent = String(running);
-        el.projectEmpty.classList.toggle("hidden", count > 0);
-        el.projectGrid.innerHTML = state.projects.map(projectCardHtml).join("");
+
+        const grouped = new Map();
+        for (const project of state.projects) {
+            const folder = String(project.folder || "").trim();
+            const list = grouped.get(folder) || [];
+            list.push(project);
+            grouped.set(folder, list);
+        }
+        const namedFolders = folderNamesInOrder();
+        el.projectEmpty.classList.toggle("hidden", count > 0 || namedFolders.length > 0);
+        if (namedFolders.length > 0) {
+            el.projectGrid.classList.add("has-folders");
+            const sections = namedFolders.map((folder) => folderSectionHtml(folder, grouped.get(folder) || []));
+            const ungrouped = grouped.get("") || [];
+            // 有项目时保留未分组落点，方便把项目从文件夹拖出来。
+            if (ungrouped.length > 0 || count > 0) sections.push(folderSectionHtml("", ungrouped));
+            el.projectGrid.innerHTML = sections.join("");
+        } else {
+            el.projectGrid.classList.remove("has-folders");
+            el.projectGrid.innerHTML = state.projects.map(projectCardHtml).join("");
+        }
+        refreshFolderOptions();
         updateCollapseButton();
 
         if (state.activeProjectId && projectById(state.activeProjectId)) {
@@ -705,6 +1115,11 @@
         const tick = async () => {
             state.statusPollTimer = 0;
             if (!state.statusPolling) return;
+            // 弹窗打开时先不重建项目网格，避免与弹窗滚动抢帧
+            if (document.body.classList.contains("modal-open")) {
+                state.statusPollTimer = window.setTimeout(tick, 1000);
+                return;
+            }
             await loadProjects();
             if (!state.statusPolling) return;
             const stillPending = state.projects.some(
@@ -980,11 +1395,17 @@
             showToast("请先停止项目再删除", "warning");
             return;
         }
-        if (!window.confirm(`确定删除项目「${project.name}」吗？`)) return;
+        const confirmed = await askConfirm({
+            title: "删除项目",
+            text: `确定删除「${project.name}」吗？运行命令和项目地址会一并删除，此操作不可撤销。`,
+            confirmText: "删除",
+        });
+        if (!confirmed) return;
         try {
             await api(`/projects/${projectId}`, { method: "DELETE" });
             state.expandedProjects.delete(Number(projectId));
             state.selectedCommands.delete(Number(projectId));
+            state.selectedLinks.delete(Number(projectId));
             state.defaultEditors.delete(Number(projectId));
             persistDefaultEditors();
             if (state.activeProjectId === Number(projectId)) closeTerminal();
@@ -1044,6 +1465,54 @@
             .filter((item) => item.command);
     }
 
+    function addProjectLinkRow(link = {}) {
+        const row = document.createElement("div");
+        row.className = "project-link-editor-row";
+        row.dataset.projectLinkRow = "1";
+
+        const name = document.createElement("input");
+        name.className = "text-input";
+        name.type = "text";
+        name.placeholder = "名称，例如 前台";
+        name.dataset.linkName = "1";
+        name.maxLength = 120;
+        name.value = link.name || "";
+
+        const url = document.createElement("input");
+        url.className = "text-input";
+        url.type = "text";
+        url.placeholder = "地址，例如 https://example.com";
+        url.dataset.linkUrl = "1";
+        url.value = link.url || "";
+
+        const remove = document.createElement("button");
+        remove.className = "icon-btn";
+        remove.type = "button";
+        remove.title = "移除这个项目地址";
+        remove.setAttribute("aria-label", "移除项目地址");
+        remove.dataset.removeProjectLink = "1";
+        remove.textContent = "✕";
+
+        row.append(name, url, remove);
+        el.projectLinkRows.append(row);
+    }
+
+    function renderProjectLinkRows(links = []) {
+        el.projectLinkRows.innerHTML = "";
+        if (Array.isArray(links) && links.length > 0) {
+            links.forEach((link) => addProjectLinkRow(link));
+        }
+    }
+
+    function collectProjectLinks() {
+        return Array.from(el.projectLinkRows.querySelectorAll("[data-project-link-row]"))
+            .map((row) => ({
+                name: String(row.querySelector("[data-link-name]")?.value || "").trim(),
+                url: String(row.querySelector("[data-link-url]")?.value || "").trim(),
+            }))
+            .filter((item) => item.url);
+    }
+
     function fillSuggestedCommands(suggestions) {
         if (!Array.isArray(suggestions) || suggestions.length === 0) return 0;
         const existing = collectRunCommands();
@@ -1063,7 +1532,22 @@
         return added;
     }
 
-    function openProjectModal(project = null) {
+    // 项目运行中只允许改名称/文件夹/介绍/地址，启动相关字段保持只读
+    function setProjectLaunchConfigLocked(locked) {
+        el.projectPath.disabled = locked;
+        el.pickProjectPathBtn.disabled = locked;
+        el.detectProjectBtn.disabled = locked;
+        el.projectType.disabled = locked;
+        el.projectStartCommand.disabled = locked;
+        el.addRunCommandBtn.disabled = locked;
+        el.runCommandRows.querySelectorAll("input, button").forEach((node) => {
+            node.disabled = locked;
+        });
+        el.projectEditNotice?.classList.toggle("hidden", !locked);
+    }
+
+    function openProjectModal(project = null, presetFolder = "") {
+        const launchLocked = Boolean(project) && ACTIVE_STATUSES.includes(project.status);
         state.editingId = project ? Number(project.id) : null;
         el.projectModalKicker.textContent = project ? "Edit Project" : "New Project";
         el.projectModalTitle.textContent = project ? "编辑项目" : "添加项目";
@@ -1071,8 +1555,13 @@
         el.projectPath.value = project?.path || "";
         el.projectName.value = project?.name || "";
         el.projectType.value = project?.type || "auto";
+        el.projectFolder.value = project?.folder || presetFolder;
+        refreshFolderOptions();
         el.projectStartCommand.value = project?.startCommand || project?.command || "";
+        el.projectIntro.value = project?.intro || "";
         renderRunCommandRows(project?.runCommands || []);
+        renderProjectLinkRows(project?.links || []);
+        setProjectLaunchConfigLocked(launchLocked);
         el.projectError.textContent = "";
         el.projectError.classList.add("hidden");
         el.projectModal.classList.add("is-open");
@@ -1086,6 +1575,29 @@
         el.projectModal.setAttribute("aria-hidden", "true");
         document.body.classList.remove("modal-open");
         state.editingId = null;
+    }
+
+    async function pickFolderInto(input, button) {
+        if (!input || !button) return;
+        button.disabled = true;
+        button.classList.add("is-picking");
+        try {
+            const json = await api("/projects/pick-folder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ initialPath: input.value.trim() }),
+            });
+            if (json.path) {
+                input.value = json.path;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                input.focus();
+            }
+        } catch (error) {
+            handleActionError(error, "打开文件夹选择器失败");
+        } finally {
+            button.disabled = false;
+            button.classList.remove("is-picking");
+        }
     }
 
     async function detectProject() {
@@ -1127,8 +1639,18 @@
         const name = el.projectName.value.trim();
         const startCommand = el.projectStartCommand.value.trim();
         const commands = collectRunCommands();
+        const intro = el.projectIntro.value.trim();
+        const links = collectProjectLinks();
+        const editingProject = state.editingId ? projectById(state.editingId) : null;
+        const launchLocked = Boolean(editingProject) && ACTIVE_STATUSES.includes(editingProject.status);
         if (!projectPath) {
             el.projectError.textContent = "请输入项目地址";
+            el.projectError.classList.remove("hidden");
+            return;
+        }
+        const invalidLink = links.find((item) => !/^https?:\/\//i.test(item.url));
+        if (invalidLink) {
+            el.projectError.textContent = `项目地址需以 http:// 或 https:// 开头：${invalidLink.url}`;
             el.projectError.classList.remove("hidden");
             return;
         }
@@ -1137,12 +1659,20 @@
         const previousText = el.saveProjectBtn.textContent;
         el.saveProjectBtn.textContent = "保存中…";
         const payload = {
-            path: projectPath,
             name,
-            type: el.projectType.value,
-            startCommand,
-            commands,
+            folder: el.projectFolder.value.trim(),
+            intro,
+            links,
         };
+        // 运行中的项目不提交启动配置，避免后端判定为修改启动命令
+        if (!launchLocked) {
+            Object.assign(payload, {
+                path: projectPath,
+                type: el.projectType.value,
+                startCommand,
+                commands,
+            });
+        }
         try {
             if (state.editingId) {
                 await api(`/projects/${state.editingId}`, {
@@ -1167,6 +1697,334 @@
         } finally {
             el.saveProjectBtn.disabled = false;
             el.saveProjectBtn.textContent = previousText;
+        }
+    }
+
+    function openFolderModal(folder = null) {
+        state.editingFolderName = folder?.name || null;
+        el.folderModalKicker.textContent = folder ? "Edit Folder" : "New Folder";
+        el.folderModalTitle.textContent = folder ? "文件夹设置" : "新建文件夹";
+        el.folderModalHint.textContent = folder
+            ? "可以修改文件夹名称和路径，项目会跟随文件夹移动"
+            : "给文件夹设置一个名称和可选的项目根路径";
+        el.saveFolderBtn.textContent = folder ? "保存设置" : "新建文件夹";
+        el.folderName.value = folder?.name || "";
+        el.folderPath.value = folder?.path || "";
+        el.folderError.textContent = "";
+        el.folderError.classList.add("hidden");
+        el.folderModal.classList.add("is-open");
+        el.folderModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        window.setTimeout(() => el.folderName.focus(), 40);
+    }
+
+    function closeFolderModal() {
+        el.folderModal.classList.remove("is-open");
+        el.folderModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        state.editingFolderName = null;
+    }
+
+    async function saveFolder(event) {
+        event.preventDefault();
+        const name = el.folderName.value.trim();
+        if (!name) {
+            el.folderError.textContent = "请输入文件夹名称";
+            el.folderError.classList.remove("hidden");
+            return;
+        }
+        el.folderError.classList.add("hidden");
+        el.saveFolderBtn.disabled = true;
+        const previousText = el.saveFolderBtn.textContent;
+        el.saveFolderBtn.textContent = "保存中…";
+        const editing = state.editingFolderName;
+        const payload = {
+            name: editing || name,
+            path: el.folderPath.value.trim(),
+        };
+        if (editing) payload.newName = name;
+        try {
+            await api("/projects/folders", {
+                method: editing ? "PATCH" : "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            closeFolderModal();
+            await loadProjects();
+            showToast(editing ? "文件夹已更新" : "文件夹已创建");
+        } catch (error) {
+            el.folderError.textContent = error.message || "保存文件夹失败";
+            el.folderError.classList.remove("hidden");
+        } finally {
+            el.saveFolderBtn.disabled = false;
+            el.saveFolderBtn.textContent = previousText;
+        }
+    }
+
+    function openPortModal() {
+        el.portError.classList.add("hidden");
+        el.portModal.classList.add("is-open");
+        el.portModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        window.setTimeout(() => el.portInput.focus(), 40);
+    }
+
+    function closePortModal() {
+        el.portModal.classList.remove("is-open");
+        el.portModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+    }
+
+    function showPortError(message) {
+        el.portError.textContent = message;
+        el.portError.classList.remove("hidden");
+    }
+
+    function renderPortUsage(connections, port) {
+        el.portError.classList.add("hidden");
+        if (!Array.isArray(connections) || connections.length === 0) {
+            el.portResult.innerHTML = `<p class="port-empty">端口 ${port} 当前没有被占用</p>`;
+            return;
+        }
+        el.portResult.innerHTML = `<div class="port-list">${connections.map((item) => {
+            const processName = escapeHtml(item.processName || "未知进程");
+            const pid = Number(item.pid) || 0;
+            const detail = [`PID ${pid}`, item.protocol, item.localAddress, item.state]
+                .filter(Boolean)
+                .map((value) => escapeHtml(value))
+                .join(" · ");
+            return `<div class="port-row">
+                <div class="port-row-main">
+                    <span class="port-row-title" title="${processName}">${processName}</span>
+                    <span class="port-row-meta">${detail}</span>
+                </div>
+                <button class="btn btn-sm btn-danger" type="button" data-port-kill="${pid}" title="结束 PID ${pid}">结束进程</button>
+            </div>`;
+        }).join("")}</div>`;
+    }
+
+    async function queryPortUsage() {
+        const port = Number(el.portInput.value);
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+            showPortError("请输入 1-65535 之间的端口号");
+            return;
+        }
+        el.portQueryBtn.disabled = true;
+        el.portQueryBtn.textContent = "查询中…";
+        try {
+            const json = await api(`/projects/ports/${port}`);
+            state.portUsagePort = port;
+            renderPortUsage(json.connections, port);
+        } catch (error) {
+            showPortError(error.message || "查询端口占用失败");
+        } finally {
+            el.portQueryBtn.disabled = false;
+            el.portQueryBtn.textContent = "查询";
+        }
+    }
+
+    async function killPortProcess(pid) {
+        const port = state.portUsagePort;
+        if (!port || !Number.isInteger(pid) || pid <= 0) return;
+        const button = el.portResult.querySelector(`[data-port-kill="${pid}"]`);
+        const name = button?.closest(".port-row")?.querySelector(".port-row-title")?.textContent || "该进程";
+        if (!window.confirm(`确定结束「${name}」(PID ${pid}) 吗？进程会被立即终止。`)) return;
+        if (button) button.disabled = true;
+        try {
+            const json = await api(`/projects/ports/${port}/kill`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pid }),
+            });
+            showToast(json.message || "已结束进程");
+            await queryPortUsage();
+        } catch (error) {
+            showPortError(error.message || "结束进程失败");
+            if (button) button.disabled = false;
+        }
+    }
+
+    function updateOneShotButton() {
+        const count = state.oneShotIds.length;
+        el.oneShotStartBtn.title = count
+            ? `一键启动已配置的 ${count} 个项目`
+            : "一键启动（尚未配置，点击先配置）";
+        el.oneShotStartBtn.classList.toggle("is-empty", count === 0);
+    }
+
+    function updateOneShotCount() {
+        const count = el.oneShotList.querySelectorAll("[data-oneshot-id]:checked").length;
+        el.oneShotCount.textContent = `已选 ${count} 个`;
+    }
+
+    function renderOneShotList() {
+        if (state.projects.length === 0) {
+            el.oneShotList.innerHTML = '<p class="oneshot-empty">还没有项目，请先添加项目</p>';
+            updateOneShotCount();
+            return;
+        }
+        const selected = new Set(state.oneShotIds);
+        el.oneShotList.innerHTML = state.projects.map((project) => {
+            const id = Number(project.id);
+            const name = escapeHtml(project.name || "未命名项目");
+            const folder = String(project.folder || "").trim() || "未分组";
+            const statusLabel = statusMeta(project.status).label;
+            return `<label class="oneshot-row">
+                <input type="checkbox" data-oneshot-id="${id}"${selected.has(id) ? " checked" : ""}>
+                <span class="oneshot-row-main">
+                    <span class="oneshot-row-name" title="${name}">${name}</span>
+                    <span class="oneshot-row-meta">${escapeHtml(folder)} · ${escapeHtml(statusLabel)}</span>
+                </span>
+            </label>`;
+        }).join("");
+        updateOneShotCount();
+    }
+
+    function openOneShotModal() {
+        el.oneShotError.classList.add("hidden");
+        renderOneShotList();
+        el.oneShotModal.classList.add("is-open");
+        el.oneShotModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+    }
+
+    function closeOneShotModal() {
+        el.oneShotModal.classList.remove("is-open");
+        el.oneShotModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+    }
+
+    function saveOneShotConfig() {
+        const ids = Array.from(el.oneShotList.querySelectorAll("[data-oneshot-id]:checked"))
+            .map((node) => Number(node.dataset.oneshotId))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        state.oneShotIds = ids;
+        persistOneShotIds(ids);
+        updateOneShotButton();
+        closeOneShotModal();
+        showToast(ids.length ? `已保存 ${ids.length} 个一键启动项目` : "已清空一键启动配置");
+    }
+
+    async function startOneShotProjects() {
+        if (state.oneShotIds.length === 0) {
+            showToast("还没有配置一键启动项目", "warning");
+            openOneShotModal();
+            return;
+        }
+        const targets = state.oneShotIds.map((id) => projectById(id)).filter(Boolean);
+        if (targets.length === 0) {
+            showToast("配置的项目已不存在，请重新配置", "warning");
+            openOneShotModal();
+            return;
+        }
+        const pending = targets.filter((project) => !ACTIVE_STATUSES.includes(project.status));
+        if (pending.length === 0) {
+            showToast("配置的项目都已在运行或启动中", "warning");
+            return;
+        }
+        const previousTitle = el.oneShotStartBtn.title;
+        el.oneShotStartBtn.disabled = true;
+        el.oneShotStartBtn.title = "正在启动…";
+        let started = 0;
+        let failed = 0;
+        // 顺序启动，避免同时拉起多个服务时端口冲突
+        for (const project of pending) {
+            try {
+                await api(`/projects/${project.id}/start`, { method: "POST" });
+                started += 1;
+            } catch (error) {
+                if (error.status !== 409) failed += 1;
+            }
+        }
+        el.oneShotStartBtn.disabled = false;
+        el.oneShotStartBtn.title = previousTitle;
+        await loadProjects();
+        void loadUsage();
+        if (failed > 0) showToast(`一键启动完成：成功 ${started} 个，失败 ${failed} 个`, "warning");
+        else showToast(`已一键启动 ${started} 个项目`);
+    }
+
+    function askConfirm({ title = "确认操作", text = "", confirmText = "确定" } = {}) {
+        if (confirmResolver) settleConfirm(false);
+        el.confirmModalTitle.textContent = title;
+        el.confirmModalText.textContent = text;
+        el.confirmActionBtn.textContent = confirmText;
+        el.confirmModal.classList.add("is-open");
+        el.confirmModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        window.setTimeout(() => el.confirmActionBtn.focus(), 30);
+        return new Promise((resolve) => {
+            confirmResolver = resolve;
+        });
+    }
+
+    function settleConfirm(result) {
+        el.confirmModal.classList.remove("is-open");
+        el.confirmModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        const resolve = confirmResolver;
+        confirmResolver = null;
+        if (resolve) resolve(Boolean(result));
+    }
+
+    async function openFolderEditor(name, editor) {
+        try {
+            const json = await api("/projects/folders/open-editor", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, editor }),
+            });
+            showToast(json.message || "已打开文件夹");
+        } catch (error) {
+            handleActionError(error, "打开文件夹失败");
+        }
+    }
+
+    async function reorderFolder(source, target, after) {
+        if (!source || !target || source === target) return;
+        const names = folderNamesInOrder();
+        if (!names.includes(source) || !names.includes(target)) return;
+        const next = names.filter((name) => name !== source);
+        const targetIndex = next.indexOf(target);
+        if (targetIndex < 0) return;
+        next.splice(targetIndex + (after ? 1 : 0), 0, source);
+        next.forEach((name, index) => {
+            const folder = state.folders.get(name);
+            if (folder) folder.sortOrder = (index + 1) * 10;
+        });
+        renderProjects();
+        try {
+            await api("/projects/folders/reorder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ names: next }),
+            });
+            await loadProjects();
+            showToast("文件夹顺序已更新");
+        } catch (error) {
+            await loadProjects();
+            handleActionError(error, "更新文件夹顺序失败");
+        }
+    }
+
+    async function moveProjectToFolder(projectId, folder) {
+        const project = projectById(projectId);
+        if (!project || String(project.folder || "") === folder) return;
+        const previousFolder = project.folder || "";
+        project.folder = folder;
+        renderProjects();
+        try {
+            await api(`/projects/${projectId}/folder`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ folder }),
+            });
+            await loadProjects();
+            showToast(folder ? `已移动到「${folder}」` : "已移出文件夹");
+        } catch (error) {
+            project.folder = previousFolder;
+            renderProjects();
+            handleActionError(error, "移动项目失败");
         }
     }
 
@@ -1195,6 +2053,11 @@
         try {
             const json = await api("/projects");
             state.projects = Array.isArray(json.projects) ? json.projects : [];
+            state.folders = new Map(
+                (Array.isArray(json.folders) ? json.folders : [])
+                    .filter((folder) => folder && typeof folder.name === "string")
+                    .map((folder) => [folder.name, folder])
+            );
             renderProjects();
         } catch (error) {
             if (error.status === 401) {
@@ -1250,10 +2113,61 @@
         });
         el.addProjectBtn.addEventListener("click", () => openProjectModal());
         el.emptyAddProjectBtn.addEventListener("click", () => openProjectModal());
+        el.addFolderBtn.addEventListener("click", () => openFolderModal());
+        el.closeFolderModalBtn.addEventListener("click", closeFolderModal);
+        el.cancelFolderBtn.addEventListener("click", closeFolderModal);
+        el.folderForm.addEventListener("submit", saveFolder);
         el.closeProjectModalBtn.addEventListener("click", closeProjectModal);
         el.cancelProjectBtn.addEventListener("click", closeProjectModal);
         el.detectProjectBtn.addEventListener("click", () => void detectProject());
+        el.pickProjectPathBtn.addEventListener("click", () => void pickFolderInto(el.projectPath, el.pickProjectPathBtn));
+        el.pickFolderPathBtn.addEventListener("click", () => void pickFolderInto(el.folderPath, el.pickFolderPathBtn));
         el.projectForm.addEventListener("submit", saveProject);
+
+        el.portToolBtn.addEventListener("click", openPortModal);
+        el.closePortModalBtn.addEventListener("click", closePortModal);
+        el.closePortModalFooterBtn.addEventListener("click", closePortModal);
+        el.portModal.addEventListener("click", (event) => {
+            if (event.target === el.portModal) closePortModal();
+        });
+        el.portQueryForm.addEventListener("submit", (event) => {
+            event.preventDefault();
+            void queryPortUsage();
+        });
+        el.portResult.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-port-kill]");
+            if (!button) return;
+            void killPortProcess(Number(button.dataset.portKill));
+        });
+
+        el.oneShotConfigBtn.addEventListener("click", openOneShotModal);
+        el.oneShotStartBtn.addEventListener("click", () => void startOneShotProjects());
+        el.closeOneShotModalBtn.addEventListener("click", closeOneShotModal);
+        el.cancelOneShotBtn.addEventListener("click", closeOneShotModal);
+        el.saveOneShotBtn.addEventListener("click", saveOneShotConfig);
+        el.oneShotModal.addEventListener("click", (event) => {
+            if (event.target === el.oneShotModal) closeOneShotModal();
+        });
+        el.oneShotList.addEventListener("change", updateOneShotCount);
+        el.oneShotSelectAllBtn.addEventListener("click", () => {
+            el.oneShotList.querySelectorAll("[data-oneshot-id]").forEach((node) => {
+                node.checked = true;
+            });
+            updateOneShotCount();
+        });
+        el.oneShotClearBtn.addEventListener("click", () => {
+            el.oneShotList.querySelectorAll("[data-oneshot-id]").forEach((node) => {
+                node.checked = false;
+            });
+            updateOneShotCount();
+        });
+
+        el.confirmActionBtn.addEventListener("click", () => settleConfirm(true));
+        el.cancelConfirmBtn.addEventListener("click", () => settleConfirm(false));
+        el.closeConfirmModalBtn.addEventListener("click", () => settleConfirm(false));
+        el.confirmModal.addEventListener("click", (event) => {
+            if (event.target === el.confirmModal) settleConfirm(false);
+        });
 
         el.projectPath.addEventListener("change", () => {
             if (el.projectName.value.trim()) return;
@@ -1265,6 +2179,9 @@
         el.projectModal.addEventListener("click", (event) => {
             if (event.target === el.projectModal) closeProjectModal();
         });
+        el.folderModal.addEventListener("click", (event) => {
+            if (event.target === el.folderModal) closeFolderModal();
+        });
 
         el.toggleAllProjectsBtn.addEventListener("click", () => {
             const collapseAll = state.expandedProjects.size > 0;
@@ -1275,17 +2192,49 @@
             renderProjects();
         });
 
-        el.projectGrid.addEventListener("change", (event) => {
-            const select = event.target.closest("[data-command-select]");
-            if (!select) return;
-            const card = select.closest("[data-project-id]");
-            const projectId = Number(card?.dataset.projectId);
-            if (Number.isInteger(projectId)) {
-                state.selectedCommands.set(projectId, select.value);
-            }
-        });
-
         el.projectGrid.addEventListener("click", (event) => {
+            const folderAction = event.target.closest("[data-folder-action]");
+            if (folderAction) {
+                const section = folderAction.closest("[data-folder]");
+                const folderName = section?.dataset.folder || "";
+                if (!folderName) return;
+                if (folderAction.dataset.folderAction === "settings") {
+                    openFolderModal(state.folders.get(folderName) || { name: folderName, path: "" });
+                    return;
+                }
+                if (folderAction.dataset.folderAction === "add-project") {
+                    openProjectModal(null, folderName);
+                    return;
+                }
+                if (folderAction.dataset.folderAction === "toggle-open-menu") {
+                    const menu = folderAction.closest(".project-open-menu");
+                    if (menu) toggleOpenMenu(menu);
+                    return;
+                }
+                if (folderAction.dataset.folderAction === "open") {
+                    const editor = folderAction.dataset.editor;
+                    if (!editor) return;
+                    const fromDropdown = Boolean(folderAction.closest(".project-open-dropdown"));
+                    closeOpenMenus();
+                    if (fromDropdown && setFolderDefaultEditor(folderName, editor)) {
+                        renderProjects();
+                    }
+                    void openFolderEditor(folderName, editor);
+                }
+                return;
+            }
+            const folderToggle = event.target.closest("[data-folder-toggle]");
+            if (folderToggle) {
+                const section = folderToggle.closest("[data-folder]");
+                const key = section?.dataset.folder ?? "";
+                if (state.collapsedFolders.has(key)) state.collapsedFolders.delete(key);
+                else state.collapsedFolders.add(key);
+                persistCollapsedFolders(state.collapsedFolders);
+                const nextCollapsed = state.collapsedFolders.has(key);
+                section?.classList.toggle("is-collapsed", nextCollapsed);
+                folderToggle.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+                return;
+            }
             const button = event.target.closest("[data-action]");
             if (!button) return;
             const card = button.closest("[data-project-id]");
@@ -1295,7 +2244,51 @@
             if (action === "start") void startProject(projectId);
             else if (action === "restart") void restartProject(projectId);
             else if (action === "stop") void stopProject(projectId);
+            else if (action === "toggle-run") {
+                const project = projectById(projectId);
+                if (!project) return;
+                if (project.status === "running" || project.status === "starting") {
+                    void stopProject(projectId);
+                } else if (project.status !== "stopping") {
+                    void startProject(projectId);
+                }
+            }
             else if (action === "terminal") openTerminal(projectId);
+            else if (action === "toggle-command-picker") {
+                togglePicker(button.closest("[data-command-picker]"));
+            } else if (action === "select-command") {
+                const picker = button.closest("[data-command-picker]");
+                const option = button.closest(".project-picker-option");
+                const commandId = Number(button.dataset.commandId);
+                if (!picker || !option || !Number.isInteger(commandId) || commandId <= 0) return;
+                applyPickerSelection(picker, option);
+                state.selectedCommands.set(projectId, String(commandId));
+                closePickers();
+            } else if (action === "toggle-link-picker") {
+                togglePicker(button.closest("[data-link-picker]"));
+            } else if (action === "select-link") {
+                const picker = button.closest("[data-link-picker]");
+                const option = button.closest(".project-picker-option");
+                const linkId = Number(button.dataset.linkId);
+                if (!picker || !option || !Number.isInteger(linkId) || linkId <= 0) return;
+                applyPickerSelection(picker, option);
+                state.selectedLinks.set(projectId, String(linkId));
+                closePickers();
+            } else if (action === "open-link") {
+                const picker = button.closest("[data-link-picker]");
+                const option = button.closest(".project-picker-option");
+                const project = projectById(projectId);
+                const link = (Array.isArray(project?.links) ? project.links : [])
+                    .find((item) => Number(item.id) === Number(button.dataset.linkId));
+                if (!link) {
+                    showToast("项目地址不存在，请刷新项目", "warning");
+                    return;
+                }
+                if (picker && option) applyPickerSelection(picker, option);
+                state.selectedLinks.set(projectId, String(link.id));
+                closePickers();
+                window.open(link.url, "_blank", "noopener,noreferrer");
+            }
             else if (action === "toggle-open-menu") {
                 const menu = button.closest(".project-open-menu");
                 if (menu) toggleOpenMenu(menu);
@@ -1306,27 +2299,19 @@
                 const nextExpanded = !expanded;
                 const details = card.querySelector(".project-details");
                 details?.classList.toggle("hidden", !nextExpanded);
-                button.textContent = nextExpanded ? "收起" : "详情";
+                const detailsTitle = nextExpanded ? "收起详情" : "展开详情";
+                button.setAttribute("title", detailsTitle);
+                button.setAttribute("aria-label", detailsTitle);
                 button.setAttribute("aria-expanded", nextExpanded ? "true" : "false");
+                button.classList.toggle("is-expanded", nextExpanded);
                 card.classList.toggle("is-expanded", nextExpanded);
                 updateCollapseButton();
-            } else if (action === "run-selected") {
-                const select = card.querySelector("[data-command-select]");
-                const commandId = Number(select?.value);
-                if (!commandId) {
-                    showToast("请选择运行命令", "warning");
-                    return;
-                }
-                void runProjectCommand(projectId, commandId);
             } else if (action === "run-command") {
+                closePickers();
                 void runProjectCommand(projectId, Number(button.dataset.commandId));
             } else if (action === "edit") {
                 const project = projectById(projectId);
                 if (!project) return;
-                if (ACTIVE_STATUSES.includes(project.status)) {
-                    showToast("请先停止项目再编辑", "warning");
-                    return;
-                }
                 openProjectModal(project);
             } else if (action === "delete") void deleteProject(projectId);
             else if (action === "editor") {
@@ -1341,11 +2326,117 @@
             }
         });
 
+        const clearProjectDropHighlights = () => {
+            document.querySelectorAll(".project-folder.is-drag-over").forEach((node) => {
+                node.classList.remove("is-drag-over", "is-drop-after");
+            });
+        };
+
+        el.projectGrid.addEventListener("dragstart", (event) => {
+            const folderGrip = event.target.closest("[data-folder-grip]");
+            if (folderGrip) {
+                const section = folderGrip.closest("[data-folder]");
+                const folder = section?.dataset.folder || "";
+                if (!folder) return;
+                state.draggingFolderName = folder;
+                state.folderDropAfter = false;
+                section.classList.add("is-dragging");
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", `folder:${folder}`);
+                }
+                return;
+            }
+            if (event.target.closest("button, a, input, select, textarea")) return;
+            const card = event.target.closest("[data-project-id]");
+            if (!card) return;
+            const projectId = Number(card.dataset.projectId);
+            if (!Number.isInteger(projectId)) return;
+            state.draggingProjectId = projectId;
+            card.classList.add("is-dragging");
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", String(projectId));
+            }
+        });
+
+        el.projectGrid.addEventListener("dragend", (event) => {
+            const card = event.target.closest("[data-project-id]");
+            card?.classList.remove("is-dragging");
+            document.querySelectorAll(".project-folder.is-dragging").forEach((node) => {
+                node.classList.remove("is-dragging");
+            });
+            state.draggingProjectId = null;
+            state.draggingFolderName = null;
+            state.folderDropAfter = false;
+            clearProjectDropHighlights();
+        });
+
+        el.projectGrid.addEventListener("dragover", (event) => {
+            if (!state.draggingProjectId && !state.draggingFolderName) return;
+            const section = event.target.closest("[data-folder]");
+            if (!section) return;
+            if (state.draggingFolderName && !section.dataset.folder) return;
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+            const rect = section.getBoundingClientRect();
+            const after = Boolean(state.draggingFolderName) && event.clientY > rect.top + rect.height / 2;
+            state.folderDropAfter = after;
+            if (!section.classList.contains("is-drag-over")) {
+                clearProjectDropHighlights();
+                section.classList.add("is-drag-over");
+            }
+            section.classList.toggle("is-drop-after", after);
+        });
+
+        el.projectGrid.addEventListener("dragleave", (event) => {
+            const section = event.target.closest("[data-folder]");
+            if (section && !section.contains(event.relatedTarget)) {
+                section.classList.remove("is-drag-over", "is-drop-after");
+            }
+        });
+
+        el.projectGrid.addEventListener("drop", (event) => {
+            const section = event.target.closest("[data-folder]");
+            if (!section) return;
+            const folder = section.dataset.folder || "";
+            if (state.draggingFolderName) {
+                if (!folder) return;
+                event.preventDefault();
+                const source = state.draggingFolderName;
+                const after = state.folderDropAfter;
+                state.draggingFolderName = null;
+                state.folderDropAfter = false;
+                clearProjectDropHighlights();
+                void reorderFolder(source, folder, after);
+                return;
+            }
+            if (!state.draggingProjectId) return;
+            event.preventDefault();
+            const projectId = state.draggingProjectId;
+            state.draggingProjectId = null;
+            clearProjectDropHighlights();
+            if (section.classList.contains("is-collapsed")) {
+                state.collapsedFolders.delete(folder);
+                persistCollapsedFolders(state.collapsedFolders);
+                section.classList.remove("is-collapsed");
+                section.querySelector("[data-folder-toggle]")?.setAttribute("aria-expanded", "true");
+            }
+            void moveProjectToFolder(projectId, folder);
+        });
+
         el.addRunCommandBtn.addEventListener("click", () => addRunCommandRow());
         el.runCommandRows.addEventListener("click", (event) => {
             const button = event.target.closest("[data-remove-run-command]");
             if (!button) return;
             button.closest("[data-run-command-row]")?.remove();
+        });
+
+        el.addProjectLinkBtn.addEventListener("click", () => addProjectLinkRow());
+        el.projectLinkRows.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-remove-project-link]");
+            if (!button) return;
+            button.closest("[data-project-link-row]")?.remove();
         });
 
         el.terminalStopRunBtn.addEventListener("click", () => void stopActiveRun());
@@ -1355,16 +2446,27 @@
         el.terminalCloseBtn.addEventListener("click", closeTerminal);
 
         document.addEventListener("click", (event) => {
+            if (!event.target.closest(".project-picker")) closePickers();
             if (event.target.closest(".project-open-menu")) return;
             closeOpenMenus();
         });
 
         document.addEventListener("keydown", (event) => {
             if (event.key !== "Escape") return;
-            if (document.querySelector(".project-open-menu.is-open")) {
+            if (el.confirmModal.classList.contains("is-open")) {
+                settleConfirm(false);
+            } else if (document.querySelector(".project-picker.is-open")) {
+                closePickers();
+            } else if (document.querySelector(".project-open-menu.is-open")) {
                 closeOpenMenus();
             } else if (el.projectModal.classList.contains("is-open")) {
                 closeProjectModal();
+            } else if (el.folderModal.classList.contains("is-open")) {
+                closeFolderModal();
+            } else if (el.portModal.classList.contains("is-open")) {
+                closePortModal();
+            } else if (el.oneShotModal.classList.contains("is-open")) {
+                closeOneShotModal();
             } else if (!el.terminalDrawer.classList.contains("hidden")) {
                 closeTerminal();
             }
@@ -1380,6 +2482,7 @@
         bindEvents();
         bindUserMenu();
         applyUsageCollapsed();
+        updateOneShotButton();
         state.user = await Auth.loadCurrentUser();
         renderUserUi();
         if (!state.user) {

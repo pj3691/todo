@@ -738,9 +738,9 @@ html.desktop-app .folder-section-icon-btn:hover {
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(9, 27, 16, 0.43);
-    -webkit-backdrop-filter: blur(7px);
-    backdrop-filter: blur(7px);
+    /* 不用 backdrop-filter：桌面端是软件合成，全屏模糊会在滚动弹窗内容时
+       持续重算背景层，明显掉帧；改用略深的纯色遮罩保证性能与可读性 */
+    background: rgba(9, 27, 16, 0.56);
 }
 
 .modal-layer.is-open {
