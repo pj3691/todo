@@ -26,6 +26,60 @@
         body.pet-hidden .pet-widget {
             display: none !important;
         }
+
+        /* ---------- 调试模式：舞台边框 + 命中区域 ---------- */
+        .pet-debug-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483000;
+            border: 2px dashed rgba(255, 82, 82, 0.9);
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+
+        .pet-debug-label {
+            position: absolute;
+            top: 4px;
+            left: 6px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(255, 82, 82, 0.92);
+            color: #fff;
+            font: 700 10px/1.4 Consolas, "Cascadia Code", monospace;
+            white-space: nowrap;
+        }
+
+        .pet-debug-axis {
+            position: absolute;
+            background: rgba(255, 82, 82, 0.3);
+        }
+
+        .pet-debug-axis.is-h {
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 1px;
+        }
+
+        .pet-debug-axis.is-v {
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 1px;
+        }
+
+        .pet-debug-hit {
+            position: absolute;
+            border: 1px solid rgba(33, 150, 243, 0.85);
+            background: rgba(33, 150, 243, 0.1);
+            box-sizing: border-box;
+        }
+
+        .pet-debug-pet {
+            position: absolute;
+            border: 1px solid rgba(76, 175, 80, 0.95);
+            box-sizing: border-box;
+        }
     </style>
 </head>
 <body>
@@ -47,7 +101,7 @@
             onLogin: () => window.desktopApi?.openLogin()
         };
     </script>
-    <script src="/pages/assets/js/pet-widget.js?v=20261026m"></script>
+    <script src="/pages/assets/js/pet-widget.js?v=20261028q"></script>
     <script>
         (function () {
             window.desktopApi?.onStageAnchor?.((anchor) => {
@@ -86,6 +140,8 @@
             ];
             let hitFrame = 0;
             let lastHitSignature = "";
+            // 隐藏到托盘期间暂停上报，保留隐藏前的命中矩形
+            let hitPaused = false;
 
             function collectHitRegions() {
                 const regions = [];
@@ -116,6 +172,7 @@
 
             function reportHitRegions() {
                 hitFrame = 0;
+                if (hitPaused) return;
                 if (!window.desktopApi?.setHitRegions) return;
                 // 拖拽期间由主进程负责窗口移动，避免每帧重复计算命中矩形。
                 if (document.querySelector(".pet-widget.is-dragging")) return;
@@ -142,6 +199,101 @@
                 attributes: true,
                 attributeFilter: ["class", "style", "aria-hidden"]
             });
+
+            // ---------- 调试模式：绘制舞台边框、中线、命中区域与桌宠矩形 ----------
+            const DEBUG_FRAME_KEY = "gitstatus_pet_debug_frame_v1";
+            let debugLayer = null;
+            let debugTimer = 0;
+            let debugSignature = "";
+
+            function readDebugFrameEnabled() {
+                try {
+                    return window.localStorage.getItem(DEBUG_FRAME_KEY) === "1";
+                } catch {
+                    return false;
+                }
+            }
+
+            function ensureDebugLayer() {
+                if (debugLayer) return debugLayer;
+                debugLayer = document.createElement("div");
+                debugLayer.className = "pet-debug-layer";
+                debugLayer.setAttribute("aria-hidden", "true");
+                debugLayer.append(
+                    Object.assign(document.createElement("span"), { className: "pet-debug-axis is-h" }),
+                    Object.assign(document.createElement("span"), { className: "pet-debug-axis is-v" }),
+                    Object.assign(document.createElement("span"), { className: "pet-debug-label" })
+                );
+                document.body.append(debugLayer);
+                return debugLayer;
+            }
+
+            function renderDebugFrame() {
+                if (!debugLayer) return;
+                const root = document.querySelector(".pet-widget");
+                const petRect = root ? root.getBoundingClientRect() : null;
+                const regions = collectHitRegions();
+                const label = debugLayer.querySelector(".pet-debug-label");
+                if (label) {
+                    const petText = petRect
+                        ? ` · 桌宠 ${Math.round(petRect.left)},${Math.round(petRect.top)}`
+                        : "";
+                    label.textContent = `舞台 ${window.innerWidth}×${window.innerHeight}${petText} · 命中 ${regions.length} 块`;
+                }
+                const signature = JSON.stringify({
+                    regions,
+                    pet: petRect
+                        ? [
+                            Math.round(petRect.left),
+                            Math.round(petRect.top),
+                            Math.round(petRect.width),
+                            Math.round(petRect.height)
+                        ]
+                        : null
+                });
+                if (signature === debugSignature) return;
+                debugSignature = signature;
+                debugLayer.querySelectorAll(".pet-debug-hit, .pet-debug-pet").forEach((node) => node.remove());
+                for (const region of regions) {
+                    const box = document.createElement("span");
+                    box.className = "pet-debug-hit";
+                    box.style.left = `${region.x}px`;
+                    box.style.top = `${region.y}px`;
+                    box.style.width = `${region.width}px`;
+                    box.style.height = `${region.height}px`;
+                    debugLayer.append(box);
+                }
+                if (petRect) {
+                    const box = document.createElement("span");
+                    box.className = "pet-debug-pet";
+                    box.style.left = `${petRect.left}px`;
+                    box.style.top = `${petRect.top}px`;
+                    box.style.width = `${petRect.width}px`;
+                    box.style.height = `${petRect.height}px`;
+                    debugLayer.append(box);
+                }
+            }
+
+            function setDebugFrame(enabled) {
+                if (enabled) {
+                    ensureDebugLayer();
+                    renderDebugFrame();
+                    if (!debugTimer) debugTimer = window.setInterval(renderDebugFrame, 150);
+                    return;
+                }
+                if (debugTimer) {
+                    window.clearInterval(debugTimer);
+                    debugTimer = 0;
+                }
+                debugSignature = "";
+                debugLayer?.remove();
+                debugLayer = null;
+            }
+
+            window.addEventListener("gitstatus-pet-debug-frame", (event) => {
+                setDebugFrame(Boolean(event.detail?.enabled));
+            });
+            setDebugFrame(readDebugFrameEnabled());
 
             // 气泡里的链接统一交给系统浏览器打开，避免把桌宠窗口导航走
             document.addEventListener(
@@ -188,15 +340,32 @@
                     window.clearTimeout(hideNoticeTimer);
                     hideNoticeTimer = 0;
                     document.body.classList.add("pet-hidden");
+                    hitPaused = true;
                 } else if (type === "after-show") {
                     hideRequested = false;
                     window.clearTimeout(hideNoticeTimer);
                     hideNoticeTimer = 0;
                     document.body.classList.remove("pet-hidden");
+                    // 恢复显示后强制重报命中，并用延迟直发兼容 rAF 被推迟的情况
+                    hitPaused = false;
+                    lastHitSignature = "";
+                    scheduleHitRegions();
+                    window.setTimeout(reportHitRegions, 80);
                     window.GitStatusPet?.showMiniNotice?.("welcome");
                 } else if (type === "display-changed") {
                     // 舞台窗口由主进程直接移动到目标显示器，页面内位置不变。
                 }
+            });
+
+            // 窗口被隐藏后再显示时，visibilitychange 比 IPC 更可靠
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState !== "visible") return;
+                if (!document.body.classList.contains("pet-hidden")) return;
+                document.body.classList.remove("pet-hidden");
+                hitPaused = false;
+                lastHitSignature = "";
+                scheduleHitRegions();
+                window.setTimeout(reportHitRegions, 60);
             });
 
             // 首次启动未登录时直接弹出登录气泡，省得找不到菜单按钮

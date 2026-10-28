@@ -40,6 +40,7 @@
         positionKey: "gitstatus_pet_position_v1",
         seenKey: "gitstatus_pet_seen_events_v1",
         mutedKey: "gitstatus_pet_muted_v1",
+        debugFrameKey: "gitstatus_pet_debug_frame_v1",
         intervalLastKey: "gitstatus_pet_interval_last_v1",
         workStateKey: "gitstatus_pet_work_state_v1",
         settingsStampKey: "gitstatus_pet_settings_stamp",
@@ -96,6 +97,7 @@
         settings: null,
         tokenPresent: false,
         muted: false,
+        debugFrame: false,
         seen: new Set(),
         queue: [],
         bubbleOpen: false,
@@ -1803,6 +1805,23 @@
                 if (Number.isFinite(displayId)) global.desktopApi.moveToDisplay?.(displayId);
             });
 
+            // 调试模式：由页面（desktop-pet.html）绘制舞台边框与命中区域
+            const debugCheck = el("label", "pet-set-check");
+            const debugInput = document.createElement("input");
+            debugInput.type = "checkbox";
+            debugInput.checked = state.debugFrame;
+            debugInput.addEventListener("change", () => {
+                state.debugFrame = debugInput.checked;
+                writeStorage(state.config.debugFrameKey, state.debugFrame ? "1" : "0");
+                global.dispatchEvent(
+                    new CustomEvent("gitstatus-pet-debug-frame", {
+                        detail: { enabled: state.debugFrame }
+                    })
+                );
+            });
+            debugCheck.append(debugInput, el("span", "", "调试模式：显示舞台边框与命中区域"));
+            desktopSection.append(debugCheck);
+
             const desktopRow = el("div", "pet-set-inline-row");
             const hideBtn = el("button", "pet-btn pet-btn-muted", "隐藏桌宠");
             hideBtn.type = "button";
@@ -2461,8 +2480,25 @@
         if (event.key === state.config.settingsStampKey) void refresh();
     }
 
+    // 主进程隐藏后（若非销毁路径）用 hiddenByMain + visibilitychange 兜底恢复
+    let hiddenByMain = false;
+
+    function markHiddenByMain() {
+        hiddenByMain = true;
+        document.body.classList.add("pet-hidden");
+    }
+
+    function restoreFromMainHidden() {
+        if (!hiddenByMain) return;
+        hiddenByMain = false;
+        document.body.classList.remove("pet-hidden");
+        showMiniNotice("welcome");
+    }
+
     function onVisibility() {
-        if (!document.hidden) void refresh();
+        if (document.hidden) return;
+        restoreFromMainHidden();
+        void refresh();
     }
 
     function init(options) {
@@ -2474,12 +2510,17 @@
         createDom();
 
         state.muted = readStorage(state.config.mutedKey) === "1";
+        state.debugFrame = readStorage(state.config.debugFrameKey) === "1";
         const seen = readJson(state.config.seenKey, []);
         state.seen = new Set(Array.isArray(seen) ? seen : []);
 
         applyPetSize(false);
         restorePosition();
         if (state.config.desktop) {
+            global.desktopApi?.onPetEvent?.((type) => {
+                if (type === "hidden") markHiddenByMain();
+                else if (type === "after-show") restoreFromMainHidden();
+            });
             const rect = state.root.getBoundingClientRect();
             reportDesktopPosition(rect.left, rect.top);
         }

@@ -403,17 +403,27 @@ function finishHide() {
     }
     petHidden = true;
     if (petWin && !petWin.isDestroyed()) {
-        // 先清掉页面里的桌宠并把透明层设为不可见，避免 Windows 留下最后一帧
+        // close 方案：隐藏即销毁渲染进程，显示时重建，避免“再次显示停在最后一帧/点不动”
         petWin.webContents.send("pet:event", "hidden");
-        petWin.setOpacity(0);
-        petWin.setIgnoreMouseEvents(true, { forward: false });
-        petWin.hide();
+        try {
+            petWin.destroy();
+        } catch {
+            /* 已销毁时忽略 */
+        }
+        petWin = null;
     }
+    petHoverInside = null;
     updateTrayMenu();
 }
 
 function showPet() {
-    if (!petWin || petWin.isDestroyed()) return;
+    // 隐藏时窗口已被销毁，这里重建；首次显示会经历一次页面加载
+    if (!petWin || petWin.isDestroyed()) {
+        petHidden = false;
+        createPetWindow();
+        updateTrayMenu();
+        return;
+    }
     if (hideTimer) {
         clearTimeout(hideTimer);
         hideTimer = null;
@@ -445,6 +455,27 @@ function showPet() {
     keepPetOnTop();
     setTimeout(keepPetOnTop, 30);
     petWin.webContents.send("pet:event", "after-show");
+    // 隐藏后恢复时强制重绘，并补发事件与命中状态
+    try {
+        petWin.webContents.invalidate();
+    } catch {
+        /* 旧版本无此方法时忽略 */
+    }
+    setTimeout(() => {
+        if (!petWin || petWin.isDestroyed() || petHidden) return;
+        try {
+            petWin.webContents.invalidate();
+        } catch {
+            /* ignore */
+        }
+        petHoverInside = null;
+        keepPetOnTop();
+    }, 80);
+    setTimeout(() => {
+        if (!petWin || petWin.isDestroyed() || petHidden) return;
+        petWin.webContents.send("pet:event", "after-show");
+        petHoverInside = null;
+    }, 320);
     updateTrayMenu();
 }
 
@@ -565,6 +596,13 @@ function createPetWindow() {
 
     petWin.on("closed", () => {
         petWin = null;
+        petHitRegions = [];
+        petHoverInside = null;
+        petDragOffset = null;
+        petDragActive = false;
+        petShapeReady = false;
+        lastPetShapeKey = "";
+        updateTrayMenu();
     });
 
     // Alt+F4 / 系统关闭按钮都收进托盘，只有明确退出才真正结束进程
@@ -1073,7 +1111,7 @@ if (!hasLock) {
     });
 
     app.on("window-all-closed", () => {
-        if (process.platform !== "darwin") app.quit();
+        // 托盘常驻应用：隐藏会销毁桌宠窗口，此时不能退出进程
     });
 
     app.on("activate", () => {
