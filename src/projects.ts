@@ -171,6 +171,8 @@ type ProjectDto = {
     links: ProjectLinkDto[];
     status: ProjectStatus;
     pid: number | null;
+    // 该项目当前仍在执行的运行命令，用于前端恢复控制台入口
+    activeRun: CommandRunDto | null;
     createdAt: string;
     updatedAt: string;
 };
@@ -1597,6 +1599,11 @@ export const registerProjectFeature = (
 
     const toDto = (row: ProjectRow, commands?: ProjectCommandDto[], links?: ProjectLinkDto[]): ProjectDto => {
         const runtime = runtimes.get(row.id);
+        const activeRun = [...commandRuns.values()].find(
+            (run) =>
+                run.projectId === row.id &&
+                (run.status === "running" || run.status === "stopping")
+        );
         return {
             id: row.id,
             name: row.name,
@@ -1611,6 +1618,7 @@ export const registerProjectFeature = (
             links: links ?? getProjectLinks(row.id),
             status: runtime?.status || "stopped",
             pid: runtime?.pid ?? null,
+            activeRun: activeRun ? toRunDto(activeRun) : null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };

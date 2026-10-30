@@ -168,12 +168,9 @@
         collapsedFolders: readCollapsedFolders(),
         statusPollTimer: 0,
         statusPolling: false,
-        activeProjectId: null,
-        terminalMode: "start",
-        activeRunId: null,
-        activeRunName: "",
-        activeRunCommand: "",
-        logSeq: 0,
+        // 控制台会话集合：key -> { key, projectId, mode, runId, runName, command, status, pid, logSeq, lastUsedAt }
+        terminals: new Map(),
+        activeTerminalKey: null,
         pollTimer: 0,
         loading: false,
     };
@@ -210,6 +207,7 @@
         addFolderBtn: document.getElementById("addFolderBtn"),
         addProjectBtn: document.getElementById("addProjectBtn"),
         terminalDrawer: document.getElementById("terminalDrawer"),
+        terminalTabs: document.getElementById("terminalTabs"),
         terminalProjectName: document.getElementById("terminalProjectName"),
         terminalStatus: document.getElementById("terminalStatus"),
         terminalPid: document.getElementById("terminalPid"),
@@ -1085,11 +1083,10 @@
         refreshFolderOptions();
         updateCollapseButton();
 
-        if (state.activeProjectId && projectById(state.activeProjectId)) {
-            const project = projectById(state.activeProjectId);
-            if (state.terminalMode === "start") {
-                updateTerminalStatus(project.status, project.pid);
-            }
+        const currentSession = activeTerminal();
+        if (currentSession && currentSession.mode === "start") {
+            const project = projectById(currentSession.projectId);
+            if (project) updateTerminalStatus(project.status, project.pid);
         }
         syncStatusPolling();
     }
@@ -1134,15 +1131,145 @@
         state.statusPollTimer = window.setTimeout(tick, 700);
     }
 
-    function updateTerminalStatus(status, pid, mode = state.terminalMode) {
-        const meta = mode === "run" ? runStatusMeta(status) : statusMeta(status);
+    const terminalSessionKey = (projectId, mode, runId = null) =>
+        `p${Number(projectId)}:${mode}${mode === "run" ? `:${Number(runId)}` : ""}`;
+
+    const activeTerminal = () =>
+        state.activeTerminalKey ? state.terminals.get(state.activeTerminalKey) || null : null;
+
+    function terminalTitle(session) {
+        const project = projectById(session.projectId);
+        const base = project?.name || "未命名项目";
+        return session.mode === "run" ? `${base} · ${session.runName || "运行命令"}` : `${base} · 启动进程`;
+    }
+
+    function ensureTerminalSession({ projectId, mode, runId = null, runName = "", command = "", status = "stopped", pid = null }) {
+        const key = terminalSessionKey(projectId, mode, runId);
+        let session = state.terminals.get(key);
+        if (!session) {
+            session = {
+                key,
+                projectId: Number(projectId),
+                mode,
+                runId: mode === "run" ? Number(runId) : null,
+                runName,
+                command,
+                status,
+                pid,
+                logSeq: 0,
+                reqId: 0,
+                lastUsedAt: 0,
+            };
+            state.terminals.set(key, session);
+        } else {
+            if (runName) session.runName = runName;
+            if (command) session.command = command;
+            if (status) session.status = status;
+            session.pid = pid;
+        }
+        return session;
+    }
+
+    function renderTerminalTabs() {
+        if (!el.terminalTabs) return;
+        el.terminalTabs.innerHTML = [...state.terminals.values()].map((session) => {
+            const meta = session.mode === "run" ? runStatusMeta(session.status) : statusMeta(session.status);
+            const isActive = session.key === state.activeTerminalKey;
+            const title = escapeHtml(terminalTitle(session));
+            return `<div class="terminal-tab${isActive ? " is-active" : ""}">
+                <button class="terminal-tab-main" type="button" role="tab" aria-selected="${isActive ? "true" : "false"}" data-terminal-tab-select="${escapeHtml(session.key)}" title="${title}">
+                    <span class="terminal-tab-dot ${meta.className}" data-terminal-tab-dot="${escapeHtml(session.key)}"></span>
+                    <span class="terminal-tab-label">${title}</span>
+                </button>
+                <button class="terminal-tab-close" type="button" data-terminal-tab-close="${escapeHtml(session.key)}" title="关闭控制台" aria-label="关闭控制台">✕</button>
+            </div>`;
+        }).join("");
+    }
+
+    // 只刷新单个标签的状态点，避免日志轮询时重建整个标签栏
+    function syncTerminalTabDot(session) {
+        const dot = el.terminalTabs?.querySelector(`[data-terminal-tab-dot="${session.key}"]`);
+        if (!dot) return;
+        const meta = session.mode === "run" ? runStatusMeta(session.status) : statusMeta(session.status);
+        dot.className = `terminal-tab-dot ${meta.className}`;
+    }
+
+    function updateTerminalStatus(status, pid) {
+        const session = activeTerminal();
+        if (!session) return;
+        session.status = status;
+        session.pid = pid;
+        const meta = session.mode === "run" ? runStatusMeta(status) : statusMeta(status);
         el.terminalStatus.className = `status-pill ${meta.className}`;
         el.terminalStatus.textContent = meta.label;
         el.terminalPid.textContent = pid ? `PID ${pid}` : "";
-        const showStop = mode === "run" && (status === "running" || status === "stopping");
+        const showStop = session.mode === "run" && (status === "running" || status === "stopping");
         el.terminalStopRunBtn.classList.toggle("hidden", !showStop);
         el.terminalStopRunBtn.textContent = status === "stopping" ? "停止中…" : "停止命令";
         el.terminalStopRunBtn.disabled = status === "stopping";
+        syncTerminalTabDot(session);
+    }
+
+    function renderTerminalHead() {
+        const session = activeTerminal();
+        if (!session) return;
+        el.terminalProjectName.textContent = terminalTitle(session);
+        el.terminalCommand.textContent = session.command || "—";
+        updateTerminalStatus(session.status, session.pid);
+    }
+
+    function activateTerminal(key) {
+        const session = state.terminals.get(key);
+        if (!session) return;
+        stopPolling();
+        state.activeTerminalKey = key;
+        session.lastUsedAt = Date.now();
+        el.terminalDrawer.classList.remove("hidden");
+        el.terminalDrawer.setAttribute("aria-hidden", "false");
+        renderTerminalTabs();
+        renderTerminalHead();
+        el.terminalLog.innerHTML = '<span class="terminal-placeholder">正在读取终端输出…</span>';
+        el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        void loadLogs(true);
+    }
+
+    function hideTerminalDrawer() {
+        stopPolling();
+        state.activeTerminalKey = null;
+        el.terminalDrawer.classList.add("hidden");
+        el.terminalDrawer.setAttribute("aria-hidden", "true");
+        el.terminalStopRunBtn.classList.add("hidden");
+        renderTerminalTabs();
+    }
+
+    function closeTerminalTab(key) {
+        if (!state.terminals.has(key)) return;
+        const wasActive = state.activeTerminalKey === key;
+        state.terminals.delete(key);
+        if (!wasActive) {
+            renderTerminalTabs();
+            return;
+        }
+        stopPolling();
+        state.activeTerminalKey = null;
+        // 关闭当前标签后切到相邻的其他控制台
+        const next = [...state.terminals.values()].pop() || null;
+        if (next) activateTerminal(next.key);
+        else hideTerminalDrawer();
+    }
+
+    // 关闭全部控制台（登出、失去权限等场景）
+    function closeTerminal() {
+        state.terminals.clear();
+        hideTerminalDrawer();
+    }
+
+    function closeProjectTerminals(projectId) {
+        const id = Number(projectId);
+        const keys = [...state.terminals.values()]
+            .filter((session) => session.projectId === id)
+            .map((session) => session.key);
+        keys.forEach((key) => closeTerminalTab(key));
     }
 
     function stopPolling() {
@@ -1152,17 +1279,19 @@
         }
     }
 
-    function schedulePoll(projectId, delay) {
+    // 只对当前激活的标签轮询，切换标签后旧轮询自然失效
+    function schedulePoll(delay) {
         stopPolling();
+        const key = state.activeTerminalKey;
         state.pollTimer = window.setTimeout(() => {
-            if (state.activeProjectId === projectId) void loadLogs(false);
+            if (state.activeTerminalKey === key) void loadLogs(false);
         }, delay);
     }
 
-    function appendLogs(logs, reset) {
+    function appendLogs(logs, reset, session) {
         if (reset) {
             el.terminalLog.innerHTML = "";
-            state.logSeq = 0;
+            session.logSeq = 0;
         }
         const entries = Array.isArray(logs) ? logs : [];
         const placeholder = el.terminalLog.querySelector(".terminal-placeholder");
@@ -1184,43 +1313,44 @@
             text.textContent = entry.text || "";
             line.append(time, text);
             fragment.append(line);
-            state.logSeq = Math.max(state.logSeq, Number(entry.seq) || 0);
+            session.logSeq = Math.max(session.logSeq, Number(entry.seq) || 0);
         }
         el.terminalLog.append(fragment);
         el.terminalLog.scrollTop = el.terminalLog.scrollHeight;
     }
 
     async function loadLogs(reset) {
-        const projectId = state.activeProjectId;
-        const mode = state.terminalMode;
-        const runId = state.activeRunId;
-        if (!projectId || (mode === "run" && !runId)) return;
+        const session = activeTerminal();
+        if (!session) return;
+        const { key, projectId, mode, runId } = session;
+        if (mode === "run" && !runId) return;
         stopPolling();
-        const after = reset ? 0 : state.logSeq;
+        const reqId = ++session.reqId;
+        const after = reset ? 0 : session.logSeq;
         const endpoint = mode === "run"
             ? `/projects/${projectId}/runs/${runId}/logs?after=${after}`
             : `/projects/${projectId}/logs?after=${after}`;
         try {
             const json = await api(endpoint);
-            if (
-                state.activeProjectId !== projectId ||
-                state.terminalMode !== mode ||
-                (mode === "run" && state.activeRunId !== runId)
-            ) {
+            // 请求发起后标签被切换/关闭时丢弃过期响应，避免日志重复
+            if (session.reqId !== reqId || state.terminals.get(key) !== session || state.activeTerminalKey !== key) {
                 return;
             }
-            appendLogs(json.logs, reset);
-            state.logSeq = Number(json.nextSeq) || state.logSeq;
+            appendLogs(json.logs, reset, session);
+            session.logSeq = Number(json.nextSeq) || session.logSeq;
 
             if (mode === "run") {
-                updateTerminalStatus(json.status, json.pid, "run");
+                updateTerminalStatus(json.status, json.pid);
                 if (json.status === "running" || json.status === "stopping") {
-                    schedulePoll(projectId, 800);
+                    schedulePoll(800);
+                } else {
+                    // 运行结束后同步清除卡片上的控制台入口标记
+                    clearProjectActiveRun(projectId, runId);
                 }
                 return;
             }
 
-            updateTerminalStatus(json.status, json.pid, "start");
+            updateTerminalStatus(json.status, json.pid);
             const project = projectById(projectId);
             if (project && (project.status !== json.status || project.pid !== json.pid)) {
                 project.status = json.status;
@@ -1228,7 +1358,7 @@
                 renderProjects();
             }
             const active = json.status === "starting" || json.status === "running" || json.status === "stopping";
-            schedulePoll(projectId, active ? 800 : 1600);
+            schedulePoll(active ? 800 : 1600);
         } catch (error) {
             if (error.status === 401) {
                 state.user = null;
@@ -1241,34 +1371,37 @@
                 return;
             }
             if (mode === "run" && error.status === 404) {
+                if (session.reqId !== reqId) return;
                 showToast("运行记录已失效", "warning");
-                closeTerminal();
+                clearProjectActiveRun(projectId, runId);
+                closeTerminalTab(key);
                 return;
             }
-            schedulePoll(projectId, 2200);
+            if (session.reqId === reqId && state.activeTerminalKey === key) {
+                schedulePoll(2200);
+            }
         }
     }
 
     function openTerminal(projectId) {
         const project = projectById(projectId);
         if (!project) return;
-        const switched = state.activeProjectId !== Number(projectId) || state.terminalMode !== "start";
-        state.activeProjectId = Number(projectId);
-        state.terminalMode = "start";
-        state.activeRunId = null;
-        state.activeRunName = "";
-        state.activeRunCommand = "";
-        if (switched) {
-            state.logSeq = 0;
-            el.terminalLog.innerHTML = '<span class="terminal-placeholder">正在读取启动进程输出…</span>';
-        }
-        el.terminalProjectName.textContent = `${project.name || "未命名项目"} · 启动进程`;
-        el.terminalCommand.textContent = project.startCommand || project.command || "未配置启动命令";
-        updateTerminalStatus(project.status, project.pid, "start");
-        el.terminalDrawer.classList.remove("hidden");
-        el.terminalDrawer.setAttribute("aria-hidden", "false");
-        el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        void loadLogs(switched);
+        const session = ensureTerminalSession({
+            projectId,
+            mode: "start",
+            command: project.startCommand || project.command || "未配置启动命令",
+            status: project.status,
+            pid: project.pid,
+        });
+        activateTerminal(session.key);
+    }
+
+    function clearProjectActiveRun(projectId, runId) {
+        const project = projectById(projectId);
+        if (!project?.activeRun) return;
+        if (Number(project.activeRun.id) !== Number(runId)) return;
+        project.activeRun = null;
+        renderProjects();
     }
 
     async function runProjectCommand(projectId, commandId) {
@@ -1285,55 +1418,67 @@
                 method: "POST",
             });
             const run = json.run;
-            state.activeProjectId = Number(projectId);
-            state.terminalMode = "run";
-            state.activeRunId = Number(run.id);
-            state.activeRunName = run.name || command.name || "运行命令";
-            state.activeRunCommand = run.command || command.command || "";
-            state.logSeq = 0;
-            el.terminalLog.innerHTML = '<span class="terminal-placeholder">正在读取命令输出…</span>';
-            el.terminalProjectName.textContent = `${project.name || "未命名项目"} · ${state.activeRunName}`;
-            el.terminalCommand.textContent = state.activeRunCommand;
-            updateTerminalStatus(run.status || "running", run.pid, "run");
-            el.terminalDrawer.classList.remove("hidden");
-            el.terminalDrawer.setAttribute("aria-hidden", "false");
-            el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            showToast(`正在运行：${state.activeRunName}`);
-            void loadLogs(true);
+            // 记录到项目上，命令运行期间关掉标签后仍能找回控制台入口
+            project.activeRun = run;
+            renderProjects();
+            openRunConsole(projectId, run);
+            showToast(`正在运行：${run.name || command.name || "运行命令"}`);
         } catch (error) {
             handleActionError(error, "运行命令失败");
         }
     }
 
+    // 打开指定运行命令的控制台标签
+    function openRunConsole(projectId, run) {
+        const project = projectById(projectId);
+        if (!project || !run) return;
+        const runId = Number(run.id);
+        if (!runId) return;
+        const session = ensureTerminalSession({
+            projectId,
+            mode: "run",
+            runId,
+            runName: run.name || "运行命令",
+            command: run.command || "",
+            status: run.status || "running",
+            pid: run.pid,
+        });
+        activateTerminal(session.key);
+    }
+
+    // 卡片上的控制台入口：优先激活该项目最近打开过的标签，其次恢复运行中的命令，最后打开启动进程
+    function openProjectConsole(projectId) {
+        const id = Number(projectId);
+        const existing = [...state.terminals.values()]
+            .filter((session) => session.projectId === id)
+            .sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0];
+        if (existing) {
+            activateTerminal(existing.key);
+            return;
+        }
+        const project = projectById(id);
+        if (!project) return;
+        const activeRun = project.activeRun;
+        if (activeRun && (activeRun.status === "running" || activeRun.status === "stopping")) {
+            openRunConsole(id, activeRun);
+            return;
+        }
+        openTerminal(id);
+    }
+
     async function stopActiveRun() {
-        if (state.terminalMode !== "run" || !state.activeRunId || !state.activeProjectId) return;
-        const projectId = state.activeProjectId;
-        const runId = state.activeRunId;
+        const session = activeTerminal();
+        if (!session || session.mode !== "run" || !session.runId) return;
         el.terminalStopRunBtn.disabled = true;
         try {
-            await api(`/projects/${projectId}/runs/${runId}/stop`, { method: "POST" });
+            await api(`/projects/${session.projectId}/runs/${session.runId}/stop`, { method: "POST" });
             showToast("正在停止运行命令");
-            if (state.activeProjectId === projectId && state.activeRunId === runId) {
-                void loadLogs(false);
-            }
+            if (activeTerminal() === session) void loadLogs(false);
         } catch (error) {
             handleActionError(error, "停止运行命令失败");
         } finally {
-            if (state.activeRunId === runId) el.terminalStopRunBtn.disabled = false;
+            if (activeTerminal() === session) el.terminalStopRunBtn.disabled = false;
         }
-    }
-
-    function closeTerminal() {
-        stopPolling();
-        state.activeProjectId = null;
-        state.terminalMode = "start";
-        state.activeRunId = null;
-        state.activeRunName = "";
-        state.activeRunCommand = "";
-        state.logSeq = 0;
-        el.terminalDrawer.classList.add("hidden");
-        el.terminalDrawer.setAttribute("aria-hidden", "true");
-        el.terminalStopRunBtn.classList.add("hidden");
     }
 
     async function startProject(projectId) {
@@ -1354,7 +1499,8 @@
             showToast("正在停止项目");
             await loadProjects();
             void loadUsage();
-            if (state.activeProjectId === Number(projectId) && state.terminalMode === "start") {
+            const session = activeTerminal();
+            if (session && session.mode === "start" && session.projectId === Number(projectId)) {
                 void loadLogs(false);
             }
         } catch (error) {
@@ -1408,7 +1554,7 @@
             state.selectedLinks.delete(Number(projectId));
             state.defaultEditors.delete(Number(projectId));
             persistDefaultEditors();
-            if (state.activeProjectId === Number(projectId)) closeTerminal();
+            closeProjectTerminals(projectId);
             showToast("项目已删除");
             await loadProjects();
         } catch (error) {
@@ -2253,7 +2399,7 @@
                     void startProject(projectId);
                 }
             }
-            else if (action === "terminal") openTerminal(projectId);
+            else if (action === "terminal") openProjectConsole(projectId);
             else if (action === "toggle-command-picker") {
                 togglePicker(button.closest("[data-command-picker]"));
             } else if (action === "select-command") {
@@ -2440,6 +2586,15 @@
         });
 
         el.terminalStopRunBtn.addEventListener("click", () => void stopActiveRun());
+        el.terminalTabs.addEventListener("click", (event) => {
+            const closeBtn = event.target.closest("[data-terminal-tab-close]");
+            if (closeBtn) {
+                closeTerminalTab(closeBtn.dataset.terminalTabClose);
+                return;
+            }
+            const selectBtn = event.target.closest("[data-terminal-tab-select]");
+            if (selectBtn) activateTerminal(selectBtn.dataset.terminalTabSelect);
+        });
         el.terminalClearBtn.addEventListener("click", () => {
             el.terminalLog.innerHTML = '<span class="terminal-placeholder">已清空当前显示，等待新的终端输出…</span>';
         });

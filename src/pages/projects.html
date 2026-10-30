@@ -2010,6 +2010,104 @@
             box-shadow: 0 10px 28px rgba(6, 22, 13, 0.18);
         }
 
+        .terminal-tabs {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            padding: 7px 10px 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            border-bottom: 1px solid #20382a;
+            background: #0f2016;
+            scrollbar-width: thin;
+            scrollbar-color: #365b45 transparent;
+        }
+
+        .terminal-tab {
+            flex: 0 0 auto;
+            max-width: 250px;
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid #20382a;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            background: #0b1710;
+            color: #8fb59d;
+        }
+
+        .terminal-tab.is-active {
+            color: #e3f5e9;
+            background: #12251a;
+        }
+
+        .terminal-tab-main {
+            min-width: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 4px 6px 10px;
+            border: 0;
+            background: none;
+            color: inherit;
+            font: inherit;
+            font-size: 0.7rem;
+            font-weight: 650;
+            cursor: pointer;
+        }
+
+        .terminal-tab-label {
+            max-width: 170px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .terminal-tab-dot {
+            flex: 0 0 auto;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #5c7a68;
+        }
+
+        .terminal-tab-dot.is-running,
+        .terminal-tab-dot.is-success {
+            background: #2fbf71;
+        }
+
+        .terminal-tab-dot.is-starting {
+            background: #4a9df1;
+        }
+
+        .terminal-tab-dot.is-stopping {
+            background: #d8a72a;
+        }
+
+        .terminal-tab-dot.is-error {
+            background: #e05a4f;
+        }
+
+        .terminal-tab-close {
+            flex: 0 0 auto;
+            width: 22px;
+            height: 22px;
+            margin-right: 2px;
+            display: grid;
+            place-items: center;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            color: #6f937e;
+            font-size: 0.62rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .terminal-tab-close:hover {
+            color: #ffb4ad;
+            background: #243d2c;
+        }
+
         .terminal-head {
             display: flex;
             align-items: flex-start;
@@ -2413,6 +2511,7 @@
             </div>
 
             <aside class="terminal-drawer hidden" id="terminalDrawer" aria-hidden="true" aria-label="项目终端">
+                <div class="terminal-tabs" id="terminalTabs" role="tablist" aria-label="控制台标签"></div>
                 <div class="terminal-head">
                     <div class="terminal-title">
                         <span class="terminal-kicker">Terminal</span>
