@@ -1508,16 +1508,16 @@ export const registerTodoFeature = (
     const dueDateTime = row.due_date
       ? `${row.due_date} ${row.due_time || "23:59"}:00`
       : null;
-    const isToday = selectedDate === localToday();
+    // 逾期按服务器当前时间判断，与 date / 日历选中日期无关
+    const todayDate = localToday();
     const isOverdue =
       !isCompleted &&
       row.schedule_type === "once" &&
       Boolean(row.due_date) &&
       (
-        String(row.due_date) < selectedDate ||
+        String(row.due_date) < todayDate ||
         (
-          isToday &&
-          String(row.due_date) === selectedDate &&
+          String(row.due_date) === todayDate &&
           Boolean(dueDateTime) &&
           String(dueDateTime) < nowDateTime
         )
@@ -1556,7 +1556,7 @@ export const registerTodoFeature = (
 
   type TodoDto = ReturnType<typeof toTodoDto>;
 
-  /** 「只显示当天」的可见性判断：每日任务按重复区间，单次任务按创建日 ~ 截止日区间 */
+  /** 「只显示当天」的可见性判断：每日任务按重复区间；单次任务从创建日起持续显示，逾期未完成会一直显示到完成为止 */
   const isTodoVisibleOnDate = (todo: TodoDto, selectedDate: string): boolean => {
     if (todo.scheduleType === "daily") return todo.isActiveOnDate;
     if (todo.isCompleted) {
@@ -1564,14 +1564,24 @@ export const registerTodoFeature = (
       return todo.dueDate === selectedDate || todo.completionDate === selectedDate;
     }
     const createdDateKey = String(todo.createdAt || "").slice(0, 10);
-    if (todo.dueDate) {
-      // 有截止日期：创建日期到截止日期之间每天可见
-      if (!createdDateKey) return selectedDate <= todo.dueDate;
-      // 截止日期早于创建日期时不构成区间，只保留截止日期当天
-      if (todo.dueDate < createdDateKey) return todo.dueDate === selectedDate;
-      return selectedDate >= createdDateKey && selectedDate <= todo.dueDate;
+    if (!createdDateKey) return true;
+    if (todo.dueDate && String(todo.dueDate) < createdDateKey) {
+      // 截止日期早于创建日期时不构成区间，从截止日期当天起持续显示
+      return selectedDate >= String(todo.dueDate);
     }
-    // 无截止日期的单次事件：只在其创建日期及之后显示
+    // 单次任务：创建日期起每天可见，未完成时无上界（逾期后继续显示提醒超时）
+    return selectedDate >= createdDateKey;
+  };
+
+  /** 「当日待办计数」口径：没到截止日期的不算当日未完成；逾期未完成持续计数直到完成 */
+  const isTodoCountedOnDate = (todo: TodoDto, selectedDate: string): boolean => {
+    if (todo.scheduleType === "daily") return todo.isActiveOnDate;
+    if (todo.isCompleted) {
+      return todo.dueDate === selectedDate || todo.completionDate === selectedDate;
+    }
+    const dueDateKey = todo.dueDate ? String(todo.dueDate).slice(0, 10) : "";
+    if (dueDateKey && selectedDate < dueDateKey) return false;
+    const createdDateKey = String(todo.createdAt || "").slice(0, 10);
     return !createdDateKey || selectedDate >= createdDateKey;
   };
 
@@ -3381,8 +3391,9 @@ export const registerTodoFeature = (
 
       const rows = listActiveTodosStmt.all(userId) as TodoRow[];
       const todayTodos = rows.map((row) => toTodoDto(row, today));
-      const visible = todayTodos.filter((todo) => isTodoVisibleOnDate(todo, today));
-      const pending = visible.filter((todo) => !todo.isCompleted);
+      // 挂件的今日统计与预览使用计数口径：未到截止日期的不计入今日未完成
+      const counted = todayTodos.filter((todo) => isTodoCountedOnDate(todo, today));
+      const pending = counted.filter((todo) => !todo.isCompleted);
       // 逾期口径与任务 DTO 保持一致：日期已过，或当天已过截止时刻
       const overdue = pending.filter((todo) => todo.isOverdue);
       const preview = pending
@@ -3470,8 +3481,8 @@ export const registerTodoFeature = (
         stats: {
           pending: pending.length,
           overdue: overdue.length,
-          completed: visible.length - pending.length,
-          total: visible.length,
+          completed: counted.length - pending.length,
+          total: counted.length,
         },
         preview,
         dueSoon: dueSoon.slice(0, 5),

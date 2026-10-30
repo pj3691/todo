@@ -8905,6 +8905,7 @@
             applyStatsPanelState();
         }
 
+        // 「只显示当天」的可见性：单次任务从创建日起持续显示，逾期未完成会一直显示到完成
         function todoAppliesToCalendarDate(todo, dateKey) {
             if (todo.scheduleType === 'daily') {
                 if (todo.repeatStartDate && dateKey < String(todo.repeatStartDate).slice(0, 10)) return false;
@@ -8918,14 +8919,26 @@
                 return (Boolean(dueDateKey) && dueDateKey === dateKey) || completionDateKey === dateKey;
             }
             const createdDateKey = String(todo.createdAt || '').slice(0, 10);
-            if (dueDateKey) {
-                // 有截止日期：创建日期到截止日期之间每天可见
-                if (!createdDateKey) return dateKey <= dueDateKey;
-                // 截止日期早于创建日期时不构成区间，只保留截止日期当天
-                if (dueDateKey < createdDateKey) return dateKey === dueDateKey;
-                return dateKey >= createdDateKey && dateKey <= dueDateKey;
+            if (!createdDateKey) return true;
+            // 截止日期早于创建日期时不构成区间，从截止日期当天起持续显示
+            if (dueDateKey && dueDateKey < createdDateKey) return dateKey >= dueDateKey;
+            return dateKey >= createdDateKey;
+        }
+
+        // 「当日待办计数」口径：没到截止日期的不算当日未完成；逾期未完成持续计数直到完成
+        function todoCountsForCalendarDate(todo, dateKey) {
+            if (todo.scheduleType === 'daily') {
+                if (todo.repeatStartDate && dateKey < String(todo.repeatStartDate).slice(0, 10)) return false;
+                if (todo.repeatEndDate && dateKey > String(todo.repeatEndDate).slice(0, 10)) return false;
+                return true;
             }
-            // 无截止日期的单次事件：只在其创建日期及之后显示
+            const dueDateKey = todo.dueDate ? String(todo.dueDate).slice(0, 10) : '';
+            if (todo.isCompleted) {
+                const completionDateKey = String(todo.completionDate || '').slice(0, 10);
+                return (Boolean(dueDateKey) && dueDateKey === dateKey) || completionDateKey === dateKey;
+            }
+            if (dueDateKey && dateKey < dueDateKey) return false;
+            const createdDateKey = String(todo.createdAt || '').slice(0, 10);
             return !createdDateKey || dateKey >= createdDateKey;
         }
 
@@ -8968,7 +8981,7 @@
             let count = 0;
             for (const todo of state.treeTodos) {
                 if (!calendarTodoInScope(todo, scope)) continue;
-                if (todoAppliesToCalendarDate(todo, dateKey)) count += 1;
+                if (todoCountsForCalendarDate(todo, dateKey)) count += 1;
             }
             return count;
         }
@@ -10734,8 +10747,8 @@
             const tasksByCategory = new Map();
             let inboxCount = 0;
             for (const todo of state.treeTodos) {
-                // 与“只显示当天”保持一致，统计只计算当天可见的任务
-                if (state.onlySelectedDate && !todoAppliesToCalendarDate(todo, state.selectedDate)) continue;
+                // 与日历计数口径一致：未到截止日期的不算当日未完成
+                if (state.onlySelectedDate && !todoCountsForCalendarDate(todo, state.selectedDate)) continue;
                 if (todo.categoryId === null || todo.categoryId === undefined) {
                     inboxCount += 1;
                 } else {
