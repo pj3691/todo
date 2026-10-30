@@ -711,7 +711,7 @@
             position: relative;
             overflow: hidden;
             min-width: 0;
-            height: 360px;
+            height: 320px;
             display: flex;
             flex-direction: column;
             padding: 17px 17px 15px 20px;
@@ -752,7 +752,7 @@
 
         @media (max-width: 600px) {
             .todo-card {
-                height: 330px;
+                height: 290px;
             }
         }
 
@@ -3543,6 +3543,38 @@
             min-height: 34px;
             margin-bottom: 10px;
             padding: 0 2px;
+        }
+
+        /* 一级文件夹：点击头部区域收起/展开 */
+        .folder-section[data-collapsible] > .folder-section-header {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .folder-section[data-collapsible] > .folder-section-header::after {
+            content: "";
+            width: 7px;
+            height: 7px;
+            margin-left: 2px;
+            flex: 0 0 auto;
+            border-right: 1.6px solid #8a9a8f;
+            border-bottom: 1.6px solid #8a9a8f;
+            transform: rotate(45deg) translate(-1px, -2px);
+            transition: transform 0.18s ease;
+        }
+
+        .folder-section[data-collapsible].is-collapsed > .folder-section-header {
+            margin-bottom: 0;
+        }
+
+        .folder-section[data-collapsible].is-collapsed > .folder-section-header::after {
+            transform: rotate(-45deg) translate(-2px, -1px);
+        }
+
+        .folder-section[data-collapsible].is-collapsed > .folder-section-grid,
+        .folder-section[data-collapsible].is-collapsed > .folder-children,
+        .folder-section[data-collapsible].is-collapsed > .folder-empty-slot {
+            display: none;
         }
 
         .folder-section-icon {
@@ -8173,6 +8205,7 @@
             selectedFolders: new Set(),
             selectionAnchorId: null,
             collapsedFolders: new Set(),
+            collapsedSections: readCollapsedSections(),
             inlineFolderParent: null,
             dragFolderIds: [],
             leftCollapsed: readStorage('gitstatus_todo_left_collapsed', '0') === '1',
@@ -8208,6 +8241,41 @@
             imageObjectUrls: new Map(),
             expiredNoticeShown: false
         };
+
+        // 首页一级文件夹分组的收起状态（不包含左侧文件夹树）
+        function readCollapsedSections() {
+            try {
+                const raw = JSON.parse(localStorage.getItem('gitstatus_todo_collapsed_sections_v1') || '[]');
+                return new Set(Array.isArray(raw) ? raw.map(String) : []);
+            } catch {
+                return new Set();
+            }
+        }
+
+        function persistCollapsedSections() {
+            try {
+                localStorage.setItem(
+                    'gitstatus_todo_collapsed_sections_v1',
+                    JSON.stringify([...state.collapsedSections])
+                );
+            } catch {
+                /* localStorage 不可用时忽略 */
+            }
+        }
+
+        function toggleFolderSection(section) {
+            if (!section) return;
+            // 一级分组用 folderId，子文件夹分组用 child:section:current 避免键冲突
+            const key = String(section.dataset.collapseKey || section.dataset.folderDrop || '');
+            if (!key) return;
+            const collapsed = section.classList.toggle('is-collapsed');
+            section
+                .querySelector(':scope > .folder-section-header')
+                ?.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            if (collapsed) state.collapsedSections.add(key);
+            else state.collapsedSections.delete(key);
+            persistCollapsedSections();
+        }
 
         let datePickerState = null;
         let modalStack = [];
@@ -10565,8 +10633,10 @@
                     ? `<span class="folder-section-name-static">${escapeHtml(currentCategory.name)}</span>`
                     : `<nav class="folder-inline-breadcrumb" aria-label="文件夹路径">${sectionBreadcrumbHtml(sectionId, currentId)}</nav>`;
                 const gridHtml = `${taskCards}${childCards}`;
-                return `<section class="folder-section" data-section-key="${sectionId}" data-folder-drop="${escapeHtml(currentId)}" style="--folder-color:${color};">
-                    <div class="folder-section-header">
+                const collapseKey = `child:${sectionId}:${currentId}`;
+                const collapsed = state.collapsedSections.has(collapseKey);
+                return `<section class="folder-section${collapsed ? ' is-collapsed' : ''}" data-collapsible="1" data-collapse-key="${escapeHtml(collapseKey)}" data-section-key="${sectionId}" data-folder-drop="${escapeHtml(currentId)}" style="--folder-color:${color};">
+                    <div class="folder-section-header" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}">
                         <span class="folder-section-icon" aria-hidden="true">${SVG.folder}</span>
                         <div class="folder-section-title">
                             ${titleHtml}
@@ -10598,8 +10668,9 @@
                 const selected = state.folderId === id;
                 if (directTasks.length === 0 && childSections.length === 0 && !selected) return '';
                 const color = safeColor(node.category.color);
-                return `<section class="folder-section" data-folder-drop="${id}" style="--folder-color:${color};">
-                    <div class="folder-section-header">
+                const collapsed = state.collapsedSections.has(String(id));
+                return `<section class="folder-section${collapsed ? ' is-collapsed' : ''}" data-collapsible="1" data-collapse-key="${escapeHtml(String(id))}" data-folder-drop="${id}" style="--folder-color:${color};">
+                    <div class="folder-section-header" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}">
                         ${folderSectionIconHtml(id, node.category.name, SVG.folder, selected)}
                         <div class="folder-section-title">
                             ${folderSectionTitleHtml(id, node.category.name)}
@@ -10616,8 +10687,9 @@
             const renderInbox = (force = false) => {
                 if (inboxTasks.length === 0 && !force) return '';
                 const selected = state.folderId === 'inbox';
-                return `<section class="folder-section" data-folder-drop="inbox" style="--folder-color:#718479;">
-                    <div class="folder-section-header">
+                const collapsed = state.collapsedSections.has('inbox');
+                return `<section class="folder-section${collapsed ? ' is-collapsed' : ''}" data-collapsible="1" data-collapse-key="inbox" data-folder-drop="inbox" style="--folder-color:#718479;">
+                    <div class="folder-section-header" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}">
                         ${folderSectionIconHtml('inbox', '收件箱', SVG.inbox, selected)}
                         <div class="folder-section-title">
                             ${folderSectionTitleHtml('inbox', '收件箱')}
@@ -12941,7 +13013,30 @@
                 scrollToGridTop();
             });
 
+            el.todoGrid.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                const header = event.target.closest(
+                    '.folder-section[data-collapsible] > .folder-section-header'
+                );
+                if (!header || header !== event.target) return;
+                event.preventDefault();
+                toggleFolderSection(header.parentElement);
+            });
+
             el.todoGrid.addEventListener('click', (event) => {
+                // 一级文件夹：点击头部区域收起/展开；头部内的按钮仍走原逻辑
+                const sectionHeader = event.target.closest(
+                    '.folder-section[data-collapsible] > .folder-section-header'
+                );
+                if (
+                    sectionHeader &&
+                    !event.target.closest(
+                        'button, a, input, select, [data-action], [data-folder-tile], [data-breadcrumb-folder], [data-local-crumb], [data-local-folder]'
+                    )
+                ) {
+                    toggleFolderSection(sectionHeader.parentElement);
+                    return;
+                }
                 const localBreadcrumb = event.target.closest('[data-local-crumb]');
                 if (localBreadcrumb) {
                     const section = localBreadcrumb.closest('[data-section-key]');

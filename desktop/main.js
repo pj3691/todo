@@ -82,6 +82,25 @@ function openExternal(value) {
     }
 }
 
+// 所有窗口统一接管 window.open / target=_blank：
+// 交给系统默认浏览器，否则 Electron 会弹出一个空白的内置窗口。
+app.on("web-contents-created", (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+        openExternal(url);
+        return { action: "deny" };
+    });
+    contents.on("will-navigate", (event, url) => {
+        if (url.startsWith("file:") || url.startsWith("devtools:")) return;
+        try {
+            if (new URL(url).origin === new URL(serverUrl).origin) return;
+        } catch {
+            /* 非法地址按外部处理 */
+        }
+        event.preventDefault();
+        openExternal(url);
+    });
+});
+
 // Windows 下透明置顶窗在焦点切换后可能被普通窗口压下去，这里反复重新置顶
 function keepPetOnTop() {
     if (!petWin || petWin.isDestroyed() || petHidden) return;

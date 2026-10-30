@@ -1973,7 +1973,7 @@
         if (!data) {
             const wrap = el("div");
             wrap.append(buildHead("GITSTATUS 桌宠", "正在看看待办喵…", undefined, true));
-            const actions = buildActions("去打办喵", state.config.todoUrl);
+            const actions = buildActions("去待办喵", state.config.todoUrl);
             appendDesktopHideAction(actions);
             wrap.append(actions);
             showBubble(wrap, "summary");
@@ -2039,7 +2039,7 @@
         }
 
         const actions = buildActions(
-            "去打办喵",
+            "去待办喵",
             state.config.todoUrl,
             state.muted ? "提醒音：关喵" : "提醒音：开喵"
         );
@@ -2127,7 +2127,7 @@
             });
             actions.append(later);
         }
-        const link = el("a", "pet-btn pet-btn-primary", notice.actionLabel || "去打办喵");
+        const link = el("a", "pet-btn pet-btn-primary", notice.actionLabel || "去待办喵");
         link.href = notice.href || state.config.todoUrl;
         actions.append(link);
         wrap.append(actions);
