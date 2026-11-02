@@ -208,10 +208,8 @@
         addProjectBtn: document.getElementById("addProjectBtn"),
         terminalDrawer: document.getElementById("terminalDrawer"),
         terminalTabs: document.getElementById("terminalTabs"),
-        terminalProjectName: document.getElementById("terminalProjectName"),
-        terminalStatus: document.getElementById("terminalStatus"),
-        terminalPid: document.getElementById("terminalPid"),
         terminalCommand: document.getElementById("terminalCommand"),
+        terminalPid: document.getElementById("terminalPid"),
         terminalLog: document.getElementById("terminalLog"),
         terminalStopRunBtn: document.getElementById("terminalStopRunBtn"),
         terminalClearBtn: document.getElementById("terminalClearBtn"),
@@ -1199,21 +1197,17 @@
         if (!session) return;
         session.status = status;
         session.pid = pid;
-        const meta = session.mode === "run" ? runStatusMeta(status) : statusMeta(status);
-        el.terminalStatus.className = `status-pill ${meta.className}`;
-        el.terminalStatus.textContent = meta.label;
-        el.terminalPid.textContent = pid ? `PID ${pid}` : "";
         const showStop = session.mode === "run" && (status === "running" || status === "stopping");
         el.terminalStopRunBtn.classList.toggle("hidden", !showStop);
         el.terminalStopRunBtn.textContent = status === "stopping" ? "停止中…" : "停止命令";
         el.terminalStopRunBtn.disabled = status === "stopping";
+        el.terminalPid.textContent = pid ? `PID ${pid}` : "";
         syncTerminalTabDot(session);
     }
 
     function renderTerminalHead() {
         const session = activeTerminal();
         if (!session) return;
-        el.terminalProjectName.textContent = terminalTitle(session);
         el.terminalCommand.textContent = session.command || "—";
         updateTerminalStatus(session.status, session.pid);
     }
@@ -1224,12 +1218,16 @@
         stopPolling();
         state.activeTerminalKey = key;
         session.lastUsedAt = Date.now();
+        const wasHidden = el.terminalDrawer.classList.contains("hidden");
         el.terminalDrawer.classList.remove("hidden");
         el.terminalDrawer.setAttribute("aria-hidden", "false");
         renderTerminalTabs();
         renderTerminalHead();
         el.terminalLog.innerHTML = '<span class="terminal-placeholder">正在读取终端输出…</span>';
-        el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        // 仅在抽屉从隐藏变为可见时滚动定位，切换标签不再带走页面滚动
+        if (wasHidden) {
+            el.terminalDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
         void loadLogs(true);
     }
 
