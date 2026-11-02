@@ -7186,6 +7186,45 @@
                 margin-left: 3px;
             }
         }
+
+        /* ---------- 桌面端（软件渲染）模糊降级 ----------
+           desktop/main.js 的 app.disableHardwareAcceleration() 是应用级开关，
+           Electron 内所有窗口都走软件合成，backdrop-filter 会退化成 CPU 卷积：
+           全屏遮罩在滚动弹窗内容时要每帧重算背景层，明显掉帧。
+           这里只关掉模糊并把半透明底色补齐，浏览器打开时保持原视觉。 */
+        html.desktop-app .topbar {
+            background: #fafcfa;
+        }
+
+        html.desktop-app .stat-card,
+        html.desktop-app .filters-card,
+        html.desktop-app .toast {
+            background: #fff;
+        }
+
+        html.desktop-app .modal-layer {
+            background: rgba(9, 27, 16, 0.56);
+        }
+
+        html.desktop-app .lightbox {
+            background: rgba(5, 15, 9, 0.9);
+        }
+
+        html.desktop-app .lightbox-toolbar {
+            background: rgba(16, 26, 19, 0.86);
+        }
+
+        html.desktop-app .topbar,
+        html.desktop-app .hero-date,
+        html.desktop-app .stat-card,
+        html.desktop-app .filters-card,
+        html.desktop-app .modal-layer,
+        html.desktop-app .toast,
+        html.desktop-app .lightbox,
+        html.desktop-app .lightbox-toolbar {
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+        }
     </style>
 </head>
 
