@@ -2661,11 +2661,8 @@
         } catch {
             /* 地址解析失败时按正常显示 */
         }
-        // 网页待办页默认不显示桌宠，由个人信息卡片里的开关控制
-        if (
-            global.GITSTATUS_PET_PAGE === "todo" &&
-            readStorage("gitstatus_pet_todo_visible_v1") !== "1"
-        ) {
+        // 桌面桌宠窗口由桌面进程控制；所有网页页面统一受「页面桌宠」开关控制，默认隐藏
+        if (!state.config.desktop && readStorage("gitstatus_pet_todo_visible_v1") !== "1") {
             return;
         }
         init();

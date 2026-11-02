@@ -1,7 +1,7 @@
 /* ============================================================
-   待办页桌宠显示偏好
-   - 网页待办页默认不显示桌宠
-   - 在账号信息卡片里通过 data-todo-pet-toggle 开关控制
+   页面桌宠显示偏好
+   - 所有网页页面共用一个开关，默认不显示桌宠
+   - 在账号信息卡片里通过 data-todo-pet-toggle 开关控制，各页面的开关与桌宠同步生效
    - 桌面版待办窗口使用 noPet=1，开关会隐藏，桌宠由桌面覆盖层负责
    ============================================================ */
 (function (global) {
@@ -45,8 +45,7 @@
         }
     }
 
-    function applyToTodoPet(visible) {
-        if (global.GITSTATUS_PET_PAGE !== "todo") return;
+    function applyPetVisibility(visible) {
         if (visible) global.GitStatusPet?.init();
         else global.GitStatusPet?.destroy();
     }
@@ -64,7 +63,7 @@
             toggle.addEventListener("change", () => {
                 const visible = toggle.checked;
                 writeVisible(visible);
-                applyToTodoPet(visible);
+                applyPetVisibility(visible);
             });
         }
         if (noPet) return;
@@ -72,7 +71,7 @@
             if (event.key !== KEY) return;
             const visible = readVisible();
             syncToggles();
-            applyToTodoPet(visible);
+            applyPetVisibility(visible);
         });
     }
 
