@@ -4,7 +4,7 @@
    - 透明区域点击穿透，桌宠与气泡区域可交互
    - 桌宠在覆盖层内拖动，位置由桌宠组件写入 localStorage
    ============================================================ */
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, dialog, Notification } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
@@ -339,6 +339,31 @@ function restartDesktop() {
     app.exit(0);
 }
 
+// 托盘“一键启动后台”：调用后端本机专用接口，按项目管理页保存的一键启动配置静默启动
+async function quickStartProjects() {
+    try {
+        const response = await fetch(`${serverUrl}/gitstatus/api/projects/local/quickstart`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data || data.res === false) {
+            throw new Error((data && data.message) || `请求失败（HTTP ${response.status}）`);
+        }
+        const started = Array.isArray(data.started) ? data.started.length : 0;
+        const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0;
+        const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+        const body = `已启动 ${started} 个，跳过 ${skipped} 个，失败 ${failed} 个`;
+        if (Notification.isSupported()) {
+            new Notification({ title: "一键启动后台", body, silent: true }).show();
+        } else {
+            dialog.showMessageBox({ type: "info", title: "一键启动后台", message: body });
+        }
+    } catch (error) {
+        dialog.showErrorBox("一键启动后台失败", error instanceof Error ? error.message : String(error));
+    }
+}
+
 function updateTrayMenu() {
     if (!tray) return;
     const visible = Boolean(petWin && !petWin.isDestroyed() && !petHidden);
@@ -368,6 +393,10 @@ function updateTrayMenu() {
             {
                 label: "打开待办",
                 click: () => openTodoWindow(false)
+            },
+            {
+                label: "一键启动后台",
+                click: () => void quickStartProjects()
             },
             {
                 label: "重启桌宠",
