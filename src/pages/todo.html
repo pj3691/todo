@@ -7444,6 +7444,10 @@
                                             <option value="once">单次</option>
                                             <option value="daily">每日</option>
                                         </select>
+                                        <select class="control" id="dueStateFilter" aria-label="超时状态">
+                                            <option value="">全部到期</option>
+                                            <option value="overdue">已超时</option>
+                                        </select>
                                     </div>
                                     <button class="btn btn-sm side-reset" id="resetFiltersBtn" type="button">重置</button>
                                 </div>
@@ -8103,6 +8107,7 @@
             datePickerConfirmBtn: $('datePickerConfirmBtn'),
             tagFilter: $('tagFilter'),
             typeFilter: $('typeFilter'),
+            dueStateFilter: $('dueStateFilter'),
             resetFiltersBtn: $('resetFiltersBtn'),
             todoGrid: $('todoGrid'),
             paginationBar: $('paginationBar'),
@@ -8225,6 +8230,7 @@
             dueTo: '',
             tagId: '',
             type: '',
+            overdueOnly: false,
             page: 1,
             pageSize: 24,
             total: 0,
@@ -8964,7 +8970,8 @@
             return dateKey >= createdDateKey;
         }
 
-        // 「当日待办计数」口径：没到截止日期的不算当日未完成；逾期未完成持续计数直到完成
+        // 「当日待办计数」口径：单次任务只统计“开始日期（创建日）- 截止日期”区间内，
+        // 每日任务按重复区间统计；区间外（含逾期）不计入日历数字。
         function todoCountsForCalendarDate(todo, dateKey) {
             if (todo.scheduleType === 'daily') {
                 if (todo.repeatStartDate && dateKey < String(todo.repeatStartDate).slice(0, 10)) return false;
@@ -8972,13 +8979,13 @@
                 return true;
             }
             const dueDateKey = todo.dueDate ? String(todo.dueDate).slice(0, 10) : '';
-            if (todo.isCompleted) {
-                const completionDateKey = String(todo.completionDate || '').slice(0, 10);
-                return (Boolean(dueDateKey) && dueDateKey === dateKey) || completionDateKey === dateKey;
-            }
-            if (dueDateKey && dateKey < dueDateKey) return false;
-            const createdDateKey = String(todo.createdAt || '').slice(0, 10);
-            return !createdDateKey || dateKey >= createdDateKey;
+            const startDateKey = String(todo.createdAt || '').slice(0, 10);
+            // 没有截止日期就没有“开始-截止”区间，不计入日历数字
+            if (!dueDateKey) return false;
+            if (!startDateKey) return dateKey <= dueDateKey;
+            // 截止日期早于开始日期时不构成有效区间，只在截止日期当天计
+            if (dueDateKey < startDateKey) return dateKey === dueDateKey;
+            return dateKey >= startDateKey && dateKey <= dueDateKey;
         }
 
         function calendarFolderScope() {
@@ -10219,6 +10226,7 @@
             }
             if (state.tagId) params.set('tagId', String(state.tagId));
             if (state.type) params.set('type', state.type);
+            if (state.overdueOnly) params.set('overdue', '1');
             return params.toString();
         }
 
@@ -10692,7 +10700,7 @@
                         <span class="folder-section-icon" aria-hidden="true">${SVG.folder}</span>
                         <div class="folder-section-title">
                             ${titleHtml}
-                            <span class="folder-section-count">${directTaskList.length}</span>
+                            <span class="folder-section-count">${countSubtreeTasks(currentId)}</span>
                         </div>
                         ${folderActionsHtml(currentId)}
                     </div>
@@ -10726,7 +10734,7 @@
                         ${folderSectionIconHtml(id, node.category.name, SVG.folder, selected)}
                         <div class="folder-section-title">
                             ${folderSectionTitleHtml(id, node.category.name)}
-                            <span class="folder-section-count">${directTasks.length}</span>
+                            <span class="folder-section-count">${countSubtreeTasks(id)}</span>
                         </div>
                         ${folderActionsHtml(id)}
                     </div>
@@ -10778,6 +10786,7 @@
                 state.dueTo ||
                 state.tagId ||
                 state.type ||
+                state.overdueOnly ||
                 (state.onlySelectedDate && state.selectedDate !== formatLocalDate(new Date()))
             );
         }
@@ -12607,6 +12616,7 @@
             state.inlineFolderParent = null;
             state.tagId = '';
             state.type = '';
+            state.overdueOnly = false;
             state.page = 1;
             if (!keepDate) {
                 const now = new Date();
@@ -12630,6 +12640,7 @@
             updateDateFilterTriggers();
             el.tagFilter.value = state.tagId;
             el.typeFilter.value = state.type;
+            el.dueStateFilter.value = state.overdueOnly ? 'overdue' : '';
             el.pageSizeSelect.value = String(state.pageSize);
             if (el.dayOnlyToggle) el.dayOnlyToggle.checked = state.onlySelectedDate;
             applyStatsStyle();
@@ -13046,6 +13057,11 @@
             });
             el.typeFilter.addEventListener('change', async () => {
                 state.type = el.typeFilter.value;
+                state.page = 1;
+                await loadTodos();
+            });
+            el.dueStateFilter.addEventListener('change', async () => {
+                state.overdueOnly = el.dueStateFilter.value === 'overdue';
                 state.page = 1;
                 await loadTodos();
             });

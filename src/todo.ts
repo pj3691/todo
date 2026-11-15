@@ -2069,6 +2069,10 @@ export const registerTodoFeature = (
       if (statusRaw && statusRaw !== "pending" && statusRaw !== "completed") {
         fail(400, "status must be pending or completed");
       }
+      // 超时（逾期）筛选：仅未完成且已过截止日期的任务
+      const overdueOnly = ["1", "true"].includes(
+        String(req.query.overdue ?? "").trim().toLowerCase(),
+      );
       const viewRaw = String(req.query.view ?? "").trim();
       if (viewRaw && !["all", "today", "inbox"].includes(viewRaw)) {
         fail(400, "view must be all, today or inbox");
@@ -2195,6 +2199,9 @@ export const registerTodoFeature = (
         todos = todos.filter((todo) =>
           statusRaw === "completed" ? todo.isCompleted : !todo.isCompleted,
         );
+      }
+      if (overdueOnly) {
+        todos = todos.filter((todo) => todo.isOverdue);
       }
       if (tagId !== null) {
         todos = todos.filter((todo) => todo.tags.some((tag) => tag.id === tagId));
