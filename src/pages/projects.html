@@ -119,6 +119,8 @@
             grid-template-columns: minmax(0, 1fr) 276px;
             gap: 14px;
             align-items: start;
+            /* 收起/展开时列宽平滑过渡 */
+            transition: grid-template-columns 0.22s ease;
         }
 
         .projects-column {
@@ -222,6 +224,8 @@
             gap: 8px;
             padding: 10px;
             overflow-y: auto;
+            /* 只允许纵向滚动：overflow-y:auto 会把 overflow-x 抬成 auto，容易出现横向滚动条 */
+            overflow-x: hidden;
             overscroll-behavior: contain;
             scrollbar-color: #cbd9ce transparent;
             scrollbar-width: thin;
@@ -233,6 +237,39 @@
             border: 1px solid #edf2ee;
             border-radius: 10px;
             background: #fbfdfb;
+            cursor: pointer;
+            transition: border-color 0.16s ease, background 0.16s ease;
+        }
+
+        .usage-item:hover {
+            border-color: #cfe3d6;
+            background: #f5fbf7;
+        }
+
+        .usage-item:focus-visible {
+            outline: 2px solid rgba(31, 122, 77, 0.35);
+            outline-offset: 1px;
+        }
+
+        /* 从“启动进程”定位后高亮 2 秒 */
+        .project-card.is-focus-flash {
+            border-color: #1f7a4d;
+            outline: 3px solid #1f7a4d;
+            outline-offset: 2px;
+            box-shadow: 0 0 0 7px rgba(31, 122, 77, 0.18), 0 12px 26px rgba(31, 122, 77, 0.22);
+            animation: project-focus-pulse 2s ease;
+        }
+
+        @keyframes project-focus-pulse {
+            0% {
+                box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.38), 0 12px 26px rgba(31, 122, 77, 0.22);
+            }
+            50% {
+                box-shadow: 0 0 0 9px rgba(31, 122, 77, 0.16), 0 12px 26px rgba(31, 122, 77, 0.22);
+            }
+            100% {
+                box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.38), 0 12px 26px rgba(31, 122, 77, 0.22);
+            }
         }
 
         .usage-item-head {
@@ -414,6 +451,31 @@
             text-align: center;
         }
 
+        @keyframes usage-panel-in {
+            from {
+                opacity: 0;
+                transform: translateX(5px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes usage-rail-in {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        .usage-sidebar:not(.is-collapsed) .usage-sidebar-head,
+        .usage-sidebar:not(.is-collapsed) .usage-sidebar-body {
+            animation: usage-panel-in 0.22s ease;
+        }
+
         .usage-sidebar.is-collapsed {
             max-height: none;
         }
@@ -425,6 +487,7 @@
 
         .usage-sidebar.is-collapsed .usage-rail-toggle {
             display: flex;
+            animation: usage-rail-in 0.22s ease;
         }
 
         .projects-workspace.is-usage-collapsed {
@@ -2705,7 +2768,7 @@
     </div>
 
     <script src="/pages/assets/js/auth-client.js"></script>
-    <script src="/pages/assets/js/projects.js?v=20261028j"></script>
+    <script src="/pages/assets/js/projects.js?v=20261112b"></script>
 </body>
 
 </html>

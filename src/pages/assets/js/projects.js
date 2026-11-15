@@ -39,6 +39,8 @@
         vscode: { label: "VS Code" },
         qoder: { label: "Qoder IDE" },
         explorer: { label: "文件资源管理器" },
+        powershell: { label: "PowerShell" },
+        cmd: { label: "CMD" },
     };
     const DEFAULT_EDITORS_KEY = "gitstatus_project_default_editors";
     const FOLDER_DEFAULT_EDITORS_KEY = "gitstatus_project_folder_default_editors";
@@ -144,7 +146,7 @@
         user: null,
         projects: [],
         folders: new Map(),
-        editors: { vscode: true, qoder: true, explorer: true },
+        editors: { vscode: true, qoder: true, explorer: true, powershell: true, cmd: true },
         editingId: null,
         editingFolderName: null,
         draggingProjectId: null,
@@ -307,6 +309,12 @@
         if (editor === "qoder") {
             return `<img class="editor-icon-image" src="/pages/assets/images/qoder-ide.png" width="${size}" height="${size}" alt="" aria-hidden="true">`;
         }
+        if (editor === "powershell") {
+            return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><rect x="1.6" y="3" width="20.8" height="18" rx="3.2" fill="#1b4e8c"></rect><rect x="1.6" y="3" width="20.8" height="18" rx="3.2" fill="#2c7fd0" opacity="0.5"></rect><rect x="1.6" y="3" width="20.8" height="4.4" rx="3.2" fill="#0f3560"></rect><path d="M6.2 10.6 9.8 13.4 6.2 16.2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path><rect x="11.4" y="15" width="6.2" height="1.8" rx="0.9" fill="#fff"></rect></svg>`;
+        }
+        if (editor === "cmd") {
+            return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><rect x="1.6" y="3" width="20.8" height="18" rx="3.2" fill="#1f2428"></rect><rect x="1.6" y="3" width="20.8" height="4.4" rx="3.2" fill="#343b41"></rect><path d="M6.2 10.4 9.6 13.2 6.2 16" fill="none" stroke="#e9edf1" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path><rect x="11.2" y="14.9" width="5.8" height="1.7" rx="0.85" fill="#e9edf1"></rect></svg>`;
+        }
         return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path fill="#E4A33D" d="M3.5 5h5.2l2 2H20A1.5 1.5 0 0 1 21.5 8.5v9A1.5 1.5 0 0 1 20 19H4a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 4 5Z"></path><path fill="#F5C15B" d="M3.5 8h17v9.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5V8Z"></path></svg>`;
     };
 
@@ -462,7 +470,7 @@
             const pid = item.pid === null || item.pid === undefined ? "—" : escapeHtml(item.pid);
             const cpuText = cpu !== null && Number.isFinite(cpu) ? formatCpuPercent(cpu) : "—";
             const memoryText = memory !== null && Number.isFinite(memory) ? formatMemory(memory) : "—";
-            return `<article class="usage-item">
+            return `<article class="usage-item" data-usage-project="${Number(item.projectId) || 0}" role="button" tabindex="0" aria-label="定位到项目 ${name}">
                 <div class="usage-item-head">
                     <span class="usage-item-name" title="${name}">${name}</span>
                     <span class="usage-item-status ${status.className}">${escapeHtml(status.label)}</span>
@@ -512,6 +520,32 @@
         } finally {
             state.usageLoading = false;
         }
+    }
+
+    // 侧边“启动进程”点击后：展开所在文件夹、滚到卡片、打开命令菜单并高亮 2 秒
+    function focusProjectCard(projectId) {
+        const card = document.querySelector(`.project-card[data-project-id="${projectId}"]`);
+        if (!card) {
+            showToast("未找到对应的项目卡片");
+            return;
+        }
+        // 只展开所在的文件夹分组，不展开卡片详情
+        const folder = card.closest("[data-folder]");
+        if (folder?.classList.contains("is-collapsed")) {
+            const folderKey = folder.dataset.folder ?? "";
+            state.collapsedFolders.delete(folderKey);
+            persistCollapsedFolders(state.collapsedFolders);
+            folder.classList.remove("is-collapsed");
+            folder.querySelector("[data-folder-toggle]")?.setAttribute("aria-expanded", "true");
+            updateCollapseButton();
+        }
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        const picker = card.querySelector("[data-command-picker]") || card.querySelector("[data-link-picker]");
+        if (picker) togglePicker(picker);
+        card.classList.remove("is-focus-flash");
+        void card.offsetWidth;
+        card.classList.add("is-focus-flash");
+        window.setTimeout(() => card.classList.remove("is-focus-flash"), 2000);
     }
 
     function stopUsagePolling() {
@@ -819,6 +853,14 @@
                                     ${editorIcon("qoder")}
                                     <span>Qoder IDE${defaultBadge("qoder")}</span>
                                 </button>
+                                <button class="project-open-option" type="button" role="menuitem" data-action="editor" data-editor="powershell" title="${escapeHtml(editorTitle(state.editors.powershell, "PowerShell"))}"${state.editors.powershell ? "" : " disabled"}>
+                                    ${editorIcon("powershell")}
+                                    <span>在 PowerShell 中打开</span>
+                                </button>
+                                <button class="project-open-option" type="button" role="menuitem" data-action="editor" data-editor="cmd" title="${escapeHtml(editorTitle(state.editors.cmd, "CMD"))}"${state.editors.cmd ? "" : " disabled"}>
+                                    ${editorIcon("cmd")}
+                                    <span>在 CMD 中打开</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -937,6 +979,8 @@
                             ${folderOpenOption("explorer", "文件资源管理器")}
                             ${folderOpenOption("vscode", "VS Code")}
                             ${folderOpenOption("qoder", "Qoder IDE")}
+                            ${folderOpenOption("powershell", "PowerShell")}
+                            ${folderOpenOption("cmd", "CMD")}
                         </div>
                     </div>
                     <button class="project-folder-action is-settings" type="button" data-folder-action="settings" title="文件夹设置" aria-label="文件夹设置">
@@ -2038,12 +2082,43 @@
         document.body.classList.remove("modal-open");
     }
 
+    // 一键启动配置同步到后端，桌面端托盘“一键启动后台”读取的就是这份数据
+    async function syncOneShotToServer(ids) {
+        try {
+            await api("/projects/quickstart", {
+                method: "PUT",
+                body: JSON.stringify({ projectIds: ids }),
+            });
+        } catch {
+            /* 后端不可用时只保留本地配置 */
+        }
+    }
+
+    async function syncOneShotFromServer() {
+        try {
+            const json = await api("/projects/quickstart");
+            const ids = Array.isArray(json.projectIds)
+                ? json.projectIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+                : [];
+            if (ids.length > 0 || state.oneShotIds.length === 0) {
+                state.oneShotIds = ids;
+                persistOneShotIds(ids);
+                updateOneShotButton();
+                return;
+            }
+            await syncOneShotToServer(state.oneShotIds);
+        } catch {
+            /* 忽略：本地配置仍可用 */
+        }
+    }
+
     function saveOneShotConfig() {
         const ids = Array.from(el.oneShotList.querySelectorAll("[data-oneshot-id]:checked"))
             .map((node) => Number(node.dataset.oneshotId))
             .filter((id) => Number.isInteger(id) && id > 0);
         state.oneShotIds = ids;
         persistOneShotIds(ids);
+        void syncOneShotToServer(ids);
         updateOneShotButton();
         closeOneShotModal();
         showToast(ids.length ? `已保存 ${ids.length} 个一键启动项目` : "已清空一键启动配置");
@@ -2203,6 +2278,7 @@
                     .map((folder) => [folder.name, folder])
             );
             renderProjects();
+            void syncOneShotFromServer();
         } catch (error) {
             if (error.status === 401) {
                 state.user = null;
@@ -2226,6 +2302,8 @@
                     vscode: json.editors.vscode !== false,
                     qoder: json.editors.qoder !== false,
                     explorer: json.editors.explorer !== false,
+                    powershell: json.editors.powershell !== false,
+                    cmd: json.editors.cmd !== false,
                 };
                 if (state.projects.length > 0) renderProjects();
             }
@@ -2252,6 +2330,21 @@
         el.refreshBtn.addEventListener("click", () => void loadProjects());
         el.usageCollapseBtn?.addEventListener("click", () => setUsageCollapsed(true));
         el.usageRailToggle?.addEventListener("click", () => setUsageCollapsed(false));
+        // 启动进程列表：点击卡片定位到对应项目并展开菜单
+        el.usageList?.addEventListener("click", (event) => {
+            const item = event.target.closest("[data-usage-project]");
+            if (!item) return;
+            const projectId = Number(item.dataset.usageProject);
+            if (Number.isFinite(projectId)) focusProjectCard(projectId);
+        });
+        el.usageList?.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            const item = event.target.closest("[data-usage-project]");
+            if (!item) return;
+            event.preventDefault();
+            const projectId = Number(item.dataset.usageProject);
+            if (Number.isFinite(projectId)) focusProjectCard(projectId);
+        });
         document.addEventListener("visibilitychange", () => {
             if (state.user && document.visibilityState === "visible") void loadUsage();
         });

@@ -189,7 +189,7 @@ type DetectionResult = {
     detectedTypeLabel: string;
 };
 
-type EditorId = "vscode" | "qoder" | "explorer";
+type EditorId = "vscode" | "qoder" | "explorer" | "powershell" | "cmd";
 
 const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = ["starting", "running", "stopping"];
 
@@ -760,6 +760,18 @@ const editorAvailability = (): Record<EditorId, boolean> => ({
     explorer: process.platform !== "win32" || fs.existsSync(
         path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "explorer.exe")
     ),
+    powershell: process.platform === "win32" && fs.existsSync(
+        path.join(
+            process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe"
+        )
+    ),
+    cmd: process.platform === "win32" && fs.existsSync(
+        path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "System32", "cmd.exe")
+    ),
 });
 
 const launchEditorCli = (command: string, args: string[], cwd: string): void => {
@@ -1123,6 +1135,43 @@ const openProjectInEditor = (projectPath: string, editor: EditorId): string => {
         return "已在文件管理器中打开项目文件夹";
     }
 
+    if (editor === "powershell" || editor === "cmd") {
+        if (process.platform !== "win32") {
+            throw new ProjectError(400, "仅支持在 Windows 上打开终端");
+        }
+        const systemRoot = process.env.SystemRoot || process.env.WINDIR || "C:\\Windows";
+        const shellPath = editor === "powershell"
+            ? path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+            : path.join(systemRoot, "System32", "cmd.exe");
+        if (!fs.existsSync(shellPath)) {
+            throw new ProjectError(
+                500,
+                editor === "powershell" ? "找不到 powershell.exe" : "找不到 cmd.exe"
+            );
+        }
+        // 用 start 打开一个新的控制台窗口，并进入项目目录。
+        // 注意：start 是 cmd 内建命令，必须交给 shell 解析；
+        // 若走 spawn(cmd.exe, [args]) 会被 Node 的参数转义规则破坏引号，命令静默失败。
+        const quote = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+        const startCommand = editor === "powershell"
+            ? `start "" ${quote(shellPath)} -NoExit -Command ${quote(
+                  `Set-Location -LiteralPath '${projectPath.replace(/'/g, "''")}'`
+              )}`
+            : `start "" ${quote(shellPath)} /k cd /d ${quote(projectPath)}`;
+        const child = spawn(startCommand, {
+            cwd: projectPath,
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true,
+            shell: true,
+        });
+        child.on("error", () => {
+            /* 终端窗口启动失败由前端提示 */
+        });
+        child.unref();
+        return editor === "powershell" ? "已在新 PowerShell 窗口打开项目" : "已在新 CMD 窗口打开项目";
+    }
+
     let command: string | null = null;
     let args: string[] = [];
     let label = "VS Code";
@@ -1166,6 +1215,11 @@ export const registerProjectFeature = (
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
+
+        CREATE TABLE IF NOT EXISTS project_quickstart (
+            project_id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS project_commands (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1270,6 +1324,11 @@ export const registerProjectFeature = (
     let folderPickerBusy = false;
 
     const listProjectsStmt = db.prepare("SELECT * FROM projects ORDER BY id DESC");
+    const listQuickstartStmt = db.prepare("SELECT project_id FROM project_quickstart ORDER BY project_id");
+    const clearQuickstartStmt = db.prepare("DELETE FROM project_quickstart");
+    const insertQuickstartStmt = db.prepare(
+        "INSERT OR IGNORE INTO project_quickstart (project_id, created_at) VALUES (?, ?)"
+    );
     const getProjectStmt = db.prepare("SELECT * FROM projects WHERE id = ?");
     const listAllProjectCommandsStmt = db.prepare(
         "SELECT * FROM project_commands ORDER BY project_id, sort_order, id"
@@ -2050,8 +2109,88 @@ export const registerProjectFeature = (
     process.once("exit", cleanupRuntime);
 
     const projectRouter = express.Router();
+
+    // 本机专用：桌面端托盘“一键启动后台”调用，无需登录 Token（仅 loopback）
+    projectRouter.post("/local/quickstart", (req, res) => {
+        try {
+            if (!isLoopbackRequest(req)) {
+                throw new ProjectError(403, "只能在本机触发一键启动");
+            }
+            const ids = (listQuickstartStmt.all() as Array<{ project_id: number }>).map(
+                (row) => row.project_id
+            );
+            const started: number[] = [];
+            const skipped: number[] = [];
+            const failed: Array<{ id: number; message: string }> = [];
+            for (const id of ids) {
+                const row = findProject(id);
+                if (!row) {
+                    skipped.push(id);
+                    continue;
+                }
+                const runtime = getRuntime(id);
+                if (ACTIVE_PROJECT_STATUSES.includes(runtime.status)) {
+                    skipped.push(id);
+                    continue;
+                }
+                try {
+                    startProject(row);
+                    started.push(id);
+                } catch (error) {
+                    failed.push({
+                        id,
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
+            logInfo(
+                `[projects] local quickstart started=${started.length} skipped=${skipped.length} failed=${failed.length}`
+            );
+            res.json({ res: true, started, skipped, failed });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
     projectRouter.use(authMiddleware);
     projectRouter.use(requireWrite);
+
+    projectRouter.get("/quickstart", (_req, res) => {
+        try {
+            const projectIds = (listQuickstartStmt.all() as Array<{ project_id: number }>).map(
+                (row) => row.project_id
+            );
+            res.json({ res: true, projectIds });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
+    projectRouter.put("/quickstart", (req, res) => {
+        try {
+            const raw: unknown[] = Array.isArray(req.body?.projectIds) ? req.body.projectIds : [];
+            const requested = Array.from(
+                new Set(
+                    raw
+                        .map((value) => Number(value))
+                        .filter((value) => Number.isInteger(value) && value > 0)
+                )
+            );
+            const now = new Date().toISOString();
+            const saved: number[] = [];
+            db.transaction(() => {
+                clearQuickstartStmt.run();
+                for (const id of requested) {
+                    if (!findProject(id)) continue;
+                    insertQuickstartStmt.run(id, now);
+                    saved.push(id);
+                }
+            })();
+            res.json({ res: true, projectIds: saved });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
 
     projectRouter.get("/editors", (_req, res) => {
         res.json({ res: true, editors: editorAvailability() });
@@ -2303,7 +2442,7 @@ export const registerProjectFeature = (
             if (!folder) throw new ProjectError(404, "文件夹不存在");
             if (!folder.path) throw new ProjectError(400, "请先设置文件夹路径");
             const editor = String(req.body?.editor || "") as EditorId;
-            if (!["vscode", "qoder", "explorer"].includes(editor)) {
+            if (!["vscode", "qoder", "explorer", "powershell", "cmd"].includes(editor)) {
                 throw new ProjectError(400, "不支持的编辑器");
             }
             const message = openProjectInEditor(folder.path, editor);
@@ -2611,7 +2750,7 @@ export const registerProjectFeature = (
             const row = findProject(id);
             if (!row) throw new ProjectError(404, "项目不存在");
             const editor = String(req.body?.editor || "") as EditorId;
-            if (!["vscode", "qoder", "explorer"].includes(editor)) {
+            if (!["vscode", "qoder", "explorer", "powershell", "cmd"].includes(editor)) {
                 throw new ProjectError(400, "不支持的编辑器");
             }
             const message = openProjectInEditor(row.path, editor);
