@@ -14,3 +14,7 @@ desktop/out/
 
 # 本地二进制工具（通过 GLTFPACK_BIN 环境变量或系统 PATH 指定）
 src/tools/gltfpack.exe
+
+# Research 参考项目目录（第三方开源项目克隆与学习资料，不入库）
+# 包含：ToolRAG、MCP-Zero、deepseek-harness、MCP-Chinese-Getting-Started-Guide
+research/
