@@ -1,734 +1,410 @@
 # GitStatus
 
-用 AI 实现的一个用于离线查看本地 Git 历史记录的小工具，提供类似于 GitHub 首页提交热力图、提交历史查看、每日活跃度等功能，同时包含博客文章管理系统。
+一套自托管的本地小工具，把「Git 历史洞察 + 待办清单 + 博客文档 + 项目管理 + 桌宠提醒」放在同一个后端和同一套页面里。数据全部落在本机 SQLite 与本地目录，不依赖任何外部服务或 CDN。
 
-## 使用方法
+> **桌宠的参考来源与素材声明**
+>
+> 桌宠的气泡造型与交互思路参考了 DeepSeek Harness（DSH）的社区插件 [MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)（MIT）。本项目**没有收录相关任何美术素材**：仓库默认不带鲸鱼娘立绘，`src/` 与 `desktop/` 里也没有任何角色图片。
+>
+> 未导入素材时，网页端与桌面版桌宠都显示**内置的内联 SVG 兜底造型**，图片加载失败也会回退到它，不会白屏。想换成自己的形象：打开桌宠设置 →「素材设置」→「导入图片」，支持 PNG / JPG / WebP / GIF、单文件不超过 **2MB**，上传后按账号存在服务器（换机器登录会自动同步回来），「恢复默认」即回到内置 SVG。`自行取用第三方形象图前，请先确认该素材的授权范围`。
 
-1. `npm install`
-2. `npm run dev`
+本文档只讲**怎么把项目跑起来**（网页端与桌面端的依赖下载和启动）。细节请看：
 
-服务运行在 `http://localhost:30012`
+| 想了解的 | 去看 |
+|---|---|
+| 后端接口（路径、参数、权限、响应、错误码） | [docs/后端API说明.md](docs/后端API说明.md) |
+| 桌面端桌宠（窗口架构、交互、打包） | [docs/桌面端使用说明.md](docs/桌面端使用说明.md) |
+| 全部文档索引 | [docs/README.md](docs/README.md) |
 
-### 桌面版桌宠（Windows）
+---
 
-Electron 桌面版把网页桌宠放进覆盖所有显示器虚拟桌面的透明置顶层，可以直接拖到副屏，也可收进 Windows 托盘；桌面版默认在应用内窗口打开待办页，网页待办页的桌宠默认隐藏并可在账号信息卡片中开关。后端接口、角色素材和气泡样式完全复用当前项目。先启动后端，再执行：
+## 一、功能总览
+
+| 模块 | 入口 | 能做什么 |
+|---|---|---|
+| Git 全景洞察 | [`/pages/index.html`](#41-git-全景洞察--pagesindexhtml) | 类似 GitHub 首页的提交热力图、统计曲线、分页提交记录，数据来自本地仓库扫描 |
+| 待办清单 | [`/pages/todo.html`](#42-待办清单--pagestodohtml) | 文件夹/标签/优先级/单次与每日重复任务、完成记录、提醒、图片与文件附件、注册与登录入口 |
+| 项目管理 | [`/pages/projects.html`](#43-项目管理--pagesprojectshtml) | 本地项目一键启停、多命令终端运行、日志查看、文件夹分组与排序、端口占用排查、用编辑器打开 |
+| 数据共享 | [`/pages/shares.html`](#44-数据共享--pagesshareshtml) | 把文件夹（含子文件夹）或收件箱按只读/可编辑共享给其他用户 |
+| 账号管理 | [`/pages/account.html`](#45-账号管理--pagesaccounthtml) | 管理员审核新注册、分配角色、禁用账号、迁移用户数据 |
+| 博客文档 | [仅 API](#46-博客文档无页面只有接口) | Markdown 文章的增删改查、全文搜索、与磁盘目录双向同步 |
+| 桌宠 | [网页端挂件](docs/页面说明/通用交互与登录.md#五页面桌宠网页挂件) + [Windows 桌面版](#五桌面端electron-桌宠启动) | 当天待办统计气泡、间隔/上下班/截止提醒、自定义角色素材 |
+
+本节（[四、页面使用说明](#四页面使用说明)）只做导览；每个页面的**详细**用法（字段、按钮、交互、限制、常见问题）分别写在 [docs/页面说明/](docs/README.md) 下的六篇文档里：[通用交互与登录](docs/页面说明/通用交互与登录.md) · [Git 全景洞察](docs/页面说明/Git全景洞察.md) · [待办清单](docs/页面说明/待办清单.md) · [项目管理](docs/页面说明/项目管理.md) · [数据共享](docs/页面说明/数据共享.md) · [账号管理](docs/页面说明/账号管理.md)。
+
+### 界面速览
+
+以下截图取自本机真实运行数据（仓库、项目与待办都是本机的），按页面依次展示。
+
+**Git 全景洞察**（`/pages/index.html`）—— 仓库与分支选择器、GitHub 风格的年度提交热力图（鼠标悬停看当日提交数）、提交历史记录表。
+
+![Git 全景洞察页面](docs/screenshots/git洞察.png)
+
+**待办清单**（`/pages/todo.html`）—— 左侧文件夹树（树内可直接勾选完成）、中间按层级展开的文件夹与待办卡片流、右侧日历与统计；顶部「只显示当天」开关控制按日期可见性。
+
+![待办清单页面](docs/screenshots/待办清单.png)
+
+新建待办弹窗 —— 单次 / 每日重复、截止时间、提醒开关、图片与文件附件。
+
+![新建待办弹窗](docs/screenshots/新增待办.png)
+
+**项目管理**（`/pages/projects.html`）—— 项目卡片按分组排列，启停按钮、运行命令选择器与命名链接、展开后的命令列表；右侧「启动进程」侧栏实时显示 CPU 与内存占用。
+
+![项目管理页面](docs/screenshots/项目管理.png)
+
+**桌宠（网页端挂件）** —— 气泡里是当天待办统计与未完成列表，右下角是角色本体与待办数徽标。（图里的形象是**自行导入的素材**，不是默认造型）
+
+![页面桌宠与摘要面板](docs/screenshots/桌宠2.png)
+
+**桌宠（Windows 桌面版）** —— 透明置顶小窗，思维气泡 + 鼠标悬停才显示的一列按钮。
+
+![桌面版桌宠与气泡](docs/screenshots/桌宠-桌面版.png)
+
+桌面版设置面板（节选） —— 截止提醒、素材设置、桌面桌宠三段。
+
+![桌面版设置面板](docs/screenshots/桌宠-桌面版-设置.png)
+
+> 还有三张截图待补：`docs/screenshots/数据共享.png`、`docs/screenshots/账号管理.png`、`docs/screenshots/登录.png`。对应页面的字段、按钮与限制说明已经写在 [docs/页面说明/](docs/README.md) 里，补图后无需再改链接。
+
+---
+
+## 二、环境要求
+
+| 组件 | 版本要求 | 说明 |
+|---|---|---|
+| Node.js | **20 及以上**（建议 22 LTS / 24） | `better-sqlite3` 官方预编译包只覆盖 `20.x ~ 25.x`，低于 20 会退化成本地编译 |
+| npm | 10 及以上 | 随 Node 安装即可 |
+| Git | 任意较新版本 | 后端通过 `git` 命令扫描本地仓库历史，命令行里必须能用 |
+| 操作系统 | Windows 10 / 11 | 网页端跨平台可用；**桌面版只做 Windows** |
+
+首次 `npm install` 会拉取 `better-sqlite3` 的原生二进制，国内网络下建议保持默认镜像或提前配置代理。
+
+---
+
+## 三、网页端启动
+
+### 1. 下载依赖
+
+在项目根目录执行：
+
+```powershell
+npm install
+```
+
+### 2. 启动后端
+
+开发模式（nodemon 热重载，改动 `src` / `config` 自动重启，并在启动前释放 30012 端口）：
+
+```powershell
+npm run dev
+```
+
+只跑一次、不带热重载：
+
+```powershell
+npx tsx src/index.ts
+```
+
+启动成功后控制台输出 `server running: http://localhost:30012`。
+
+> 端口固定在 **30012**（写在 `src/index.ts`）。这个端口是特意选在 Windows 保留端口段之外的，如果仍被占用，可以用 `netsh interface ipv4 show excludedportrange protocol=tcp` 查看冲突段。
+
+### 3. 打开页面
+
+浏览器访问根路径会自动跳到洞察页：
+
+```
+http://localhost:30012
+→ http://localhost:30012/pages/index.html
+```
+
+![网页端登录遮罩](docs/screenshots/登录.png)
+
+### 4. 第一次使用
+
+1. 洞察页会直接弹出登录框。此时还没有账号，点框里的链接**前往待办页注册**（注册与登录表单在 `/pages/todo.html`）。
+2. **第一个注册的用户自动成为管理员**，注册完即拿到登录态；之后注册的用户都是 `readonly` + `pending`，需要管理员审核才能登录。
+3. 管理员在 `/pages/account.html` 审核新注册（通过 / 拒绝），并按需把只读用户提升为读写。
+4. 回到洞察页添加本地仓库路径（如 `D:/projects/my-repo`），点刷新即可看到热力图与提交记录。
+5. 待办、项目管理、共享数据按需在对应页面添加；所有数据都写在本机 `src/output/` 下。
+
+### 5. 数据落在哪里
+
+| 路径 | 内容 | 是否入库（git） |
+|---|---|---|
+| `src/output/gitstatus.db` | SQLite 主库（用户、仓库、博客、待办、项目） | 否 |
+| `src/output/logs/YYYY-MM-DD.log` | 按天切分的运行日志 | 否 |
+| `src/output/todo-images/` | 待办附件与图片按用户分目录存放 | 否 |
+| `src/output/pet-assets/` | 桌宠自定义角色素材 | 否 |
+| `src/docs/` | 博客 Markdown 正文，按分类建多级目录 | 是 |
+
+---
+
+## 四、页面使用说明
+
+五个业务页面各有一篇详细说明书，统一放在 `docs/页面说明/` 下（全部文档见 [文档索引](docs/README.md)）；本节只讲"这一页是干什么的、进去之后先看哪里"。**第一次用请先读 [通用交互与登录](docs/页面说明/通用交互与登录.md)**（导航、注册审核、角色权限、页面桌宠、本地存储键位都在这篇）。
+
+| 页面 | 地址 | 详细文档 |
+|---|---|---|
+| 通用交互与登录 | 所有页面共用 | [docs/页面说明/通用交互与登录.md](docs/页面说明/通用交互与登录.md) |
+| Git 全景洞察 | `/pages/index.html` | [docs/页面说明/Git全景洞察.md](docs/页面说明/Git全景洞察.md) |
+| 待办清单 | `/pages/todo.html` | [docs/页面说明/待办清单.md](docs/页面说明/待办清单.md) |
+| 项目管理 | `/pages/projects.html` | [docs/页面说明/项目管理.md](docs/页面说明/项目管理.md) |
+| 数据共享 | `/pages/shares.html` | [docs/页面说明/数据共享.md](docs/页面说明/数据共享.md) |
+| 账号管理 | `/pages/account.html` | [docs/页面说明/账号管理.md](docs/页面说明/账号管理.md) |
+
+### 4.0 三分钟看懂权限模型
+
+- **登录态**：未登录打开业务页会先看到登录面板；全站**只有待办页能注册**，其他页面只能登录。第一个注册的人自动是管理员，之后注册的是「只读 + 待审核」，要管理员点「通过」才能进。
+- **三档角色**：`只读`（只看）< `读写`（管自己的数据、能用项目管理）< `管理员`（多一个账号管理页）。全系统**同时只有一个管理员**，页面上既不能新建也不能转移。
+- **共享取交集**：能不能写某条待办，取决于「账号角色 ≥ 读写」**并且**「命中的共享权限 = 可编辑」。
+- **本机限定**：附件用系统默认程序打开、用编辑器/终端打开项目目录、端口占用查询与结束进程、系统文件夹选择器 —— 这几类只在**浏览器和后端在同一台机器**时可用，远程访问会给出明确提示。
+
+### 4.1 Git 全景洞察 · `/pages/index.html`
+
+看某个本地 git 仓库都发生了什么。根路径 `/` 就跳这里。
+
+- 顶部选**仓库**和**分支**，点「刷新」才真正扫描 git 历史（**新加的仓库必须先刷新一次**）。
+- 四张卡片：GitHub 风格提交热力图、分页提交历史、可滚轮缩放的趋势曲线、每日提交统计（含「活跃指数」）。
+- 数据全部来自 `git log` 真实输出，按分支分别缓存，切分支就是切一整套图表。
+
+→ 权限限制、仓库面板字段、每张图的口径与算法、常见问题见 [Git全景洞察](docs/页面说明/Git全景洞察.md)。
+
+### 4.2 待办清单 · `/pages/todo.html`
+
+这一页功能最重，是全站的主工作区，也是唯一的注册入口。
+
+- 三栏：**文件夹树**（多级、可多选、可拖拽）· **看板**（按文件夹分区铺卡片）· **日历 / 筛选 / 统计**。
+- 任务支持单次与每日重复两种计划方式、一次性 / 每日两种提醒设置、图片与文件附件（拖入、Ctrl+V 粘贴都行）。
+- 卡片的移动有三种方式：详情里的「移动」、剪切/复制后在树上「粘贴」、直接拖卡片到文件夹节点。
+- 「只显示当天」开关决定看板与日历数字的口径，两者用的是同一套可见性判断。
+- `?add=1` 直接弹出新建弹窗（桌宠的「＋」就走这个链接）。
+
+→ 弹窗字段与校验、附件上限、日期语义、图片预览缩放、快捷键、共享数据的样子见 [待办清单](docs/页面说明/待办清单.md)。
+
+### 4.3 项目管理 · `/pages/projects.html`
+
+在**后端那台机器**上登记并运行本地项目：启停服务、跑构建命令、看实时日志。需要 `读写` 及以上角色，只读账号会被"需要读写权限"面板挡住。
+
+- 填目录后点「识别」，后端按根目录的标志文件判定类型并推断启动命令，还能顺手生成一批运行命令（构建 / 测试 / 装依赖）。
+- **启动命令**与**运行命令**是两套独立的东西：前者驱动启停与状态机，后者是一次性任务、各自占一个终端标签。
+- 卡片上有：启停、重启、运行命令下拉、项目地址下拉、打开方式（文件管理器 / VS Code / Qoder IDE / PowerShell / CMD）、控制台。
+- 项目可归进**文件夹分组**（拖卡片归组、拖手柄排序），右侧有每 2 秒采样的**进程占用**栏，工具栏还有**端口占用**排查与**一键启动**。
+
+→ 识别规则表、状态机、终端与日志上限、端口保护名单、默认编辑器回退见 [项目管理](docs/页面说明/项目管理.md)。
+
+### 4.4 数据共享 · `/pages/shares.html`
+
+把自己的某个文件夹（含全部子文件夹与其中的任务）或收件箱授权给别的账号。
+
+- 三个页签：`共享给我的` / `我共享出去的` / `全部共享`（最后一个仅管理员可见）。
+- 只有**所有者或管理员**能改权限、取消共享；被共享方在自己的树里看到「共享 · 某用户」徽标，只读时写入口全部禁用。
+- 同一个人 + 同一个范围重复创建不会报错，而是**把权限覆盖更新**。
+
+→ 继承与取最高的算法、被共享方的完整观感、表结构约束见 [数据共享](docs/页面说明/数据共享.md)。
+
+### 4.5 账号管理 · `/pages/account.html`
+
+**仅管理员**可见（导航栏里那个入口对其他人根本不渲染）。
+
+- 列表默认把**待审核**顶到最前；支持用户名搜索（输入即搜）、角色/状态筛选、每页 20 条。
+- 待审核行只有「通过」和「拒绝」，**拒绝等于连数据一起删掉**。
+- 可以建号、改名、重置密码、调角色（只读/读写）、启用禁用、迁移数据、删号；但**不能修改自己的角色与状态**，也不能把管理员交给别人。
+- 「迁移」是整账号打包：分类按层级重建并同名合并、标签同名合并、任务与附件改归属（ID 不变）、源用户清空。
+
+→ 唯一管理员的层层约束、迁移的逐项语义、删除的连带范围见 [账号管理](docs/页面说明/账号管理.md)。
+
+---
+
+### 4.6 博客文档（无页面，只有接口）
+
+博客没有前端页面，统一通过 REST 接口维护，正文同时以 Markdown 落盘在 `src/docs/` 下（按分类建多级目录，**入库**）。常用做法：
+
+```powershell
+# 查文章列表（无需登录）
+Invoke-RestMethod "http://localhost:30012/gitstatus/api/blogs?page=1&pageSize=20"
+
+# 新增文章需读写权限；category 会作为 src/docs/ 下的子目录
+Invoke-RestMethod -Method Post "http://localhost:30012/gitstatus/api/blogs" `
+  -Headers @{ Authorization = "Bearer <token>" } `
+  -ContentType "application/json; charset=utf-8" `
+  -Body (@{ title = "标题"; content = "# 正文"; category = "notes" } | ConvertTo-Json)
+```
+
+改完磁盘或改完库后，调 `POST /gitstatus/api/blogs/refresh`（读写权限）做**磁盘 ↔ 数据库双向同步**。完整的参数表、字段与错误码见 [docs/后端API说明.md · 五、博客文章 API](docs/后端API说明.md#五博客文章-api)。
+
+---
+
+### 4.7 其他入口
+
+| 地址 | 用途 |
+|---|---|
+| `/` | 重定向到 Git 洞察页 |
+| `/pages/desktop-login.html` | 桌面版登录页（由桌宠应用内窗口加载，不要直接在浏览器里用） |
+| `/pages/desktop-pet.html` | 旧版桌面渲染页，现已被 `desktop/renderer/` 三窗口架构取代，仅保留可访问 |
+| `/pages/auth-test.html` | 鉴权与博客接口的联调自测页，开发时用，不属于日常功能 |
+
+---
+
+## 五、桌面端（Electron 桌宠）启动
+
+桌面版是**独立于网页端的一层透明置顶窗口**，接口、角色素材、提醒逻辑全部复用同一个后端，因此**必须先启动后端**。
+
+### 1. 先启动后端
+
+```powershell
+npm run dev
+```
+
+### 2. 下载桌面端依赖
 
 ```powershell
 npm run desktop:install
+```
+
+等价于 `cd desktop; npm install`，会安装 Electron 与 electron-builder。
+
+### 3. 启动桌宠
+
+```powershell
 npm run desktop
 ```
 
-详细的使用、配置与打包说明见 [desktop/README.md](desktop/README.md)。
+首次启动是未登录状态，桌宠会自动弹出登录气泡：点「去登录喵」→ 在登录窗口里登录 → 桌宠自动刷新。登录态保存在 Electron 本地会话里，收进托盘后再打开不用重复登录。
+
+![桌面版桌宠](docs/screenshots/桌宠-桌面版.png)
+
+### 4. 打包成免安装 exe
+
+```powershell
+cd desktop
+npm run dist
+```
+
+产物在 `desktop/dist/`（Windows portable 单文件）。打包需要联网下载 Electron 运行时，若 GitHub 拉取超时可参考 [桌面端使用说明](docs/桌面端使用说明.md) 里的镜像配置。
+
+网页端桌宠、桌面端的完整交互说明和已知限制，都写在 [docs/桌面端使用说明.md](docs/桌面端使用说明.md)。
 
 ---
 
-## API 接口文档
+## 六、常用命令速查
 
-基础路径：`/gitstatus/api`
-
----
-
-### 一、仓库管理 API
-
-#### 1. 查询仓库列表 / 单个仓库
-
-**GET** `/repos`
-
-需要登录（任意角色可读）。
-
-| 参数 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `id` | string | 否 | 传入时返回单个仓库详情（含 data） |
-
-**响应示例（列表）：**
-
-```json
-{
-  "res": true,
-  "repos": [
-    { "id": 1, "name": "my-repo", "url": "D:/projects/my-repo", "branch": "main", "defaultBranch": "main" }
-  ]
-}
-```
-
-#### 2. 新增仓库
-
-**POST** `/repos`
-
-需要 `readwrite` 及以上角色。
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `name` | string | **是** | 仓库名称 |
-| `url` | string | **是** | 本地仓库路径 |
-| `defaultBranch` | string | 否 | 默认分支 |
-
-#### 3. 修改仓库
-
-**PATCH** `/repos/:id`
-
-需要 `readwrite` 及以上角色。
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `name` | string | **是** | 仓库名称 |
-| `url` | string | **是** | 本地仓库路径 |
-| `defaultBranch` | string | 否 | 默认分支 |
-
-#### 4. 刷新仓库数据
-
-**POST** `/repos/:id/refresh`
-
-需要 `readwrite` 及以上角色，重新扫描仓库的所有分支和提交历史。
-
----
-
-### 二、认证 API
-
-用户分为三种角色：`admin`（管理员）、`readwrite`（读写）、`readonly`（只读）。第一个注册的用户自动成为管理员，之后注册的用户默认只读，由管理员按需提升。旧版本中的 `user` 角色会自动迁移为 `readwrite`。
-
-系统有且只有一个管理员账号。除首个注册用户外，不支持创建其他管理员，也不支持通过编辑用户转移管理员角色。
-
-新注册账号需要管理员审核：注册后状态为 `pending`（待审核），不会签发 token，也无法登录；管理员在账号管理页点击「通过」后状态变为 `active` 才能登录，点击「拒绝」会直接删除该用户数据。为避免恶意注册堆积，同时处于待审核状态的账号数量受 `maxPendingRegistrations` 限制（默认 20），达到上限后注册接口返回 `429`。
-
-权限等级为 `readonly < readwrite < admin`。所有权限校验都以数据库中的最新角色为准，因此修改角色、禁用账号会立即生效，无需重新登录。
-
-- `readonly`：可以查看数据（仓库、待办、博客），不能执行任何写操作。
-- `readwrite`：可以使用待办、博客、仓库管理的全部读写功能。
-- `admin`：在读写权限之上，额外拥有用户管理能力。
-
-账号状态分为 `pending`（待审核）、`active`（已启用）、`disabled`（已禁用）。只有 `active` 账号可以登录和调用需要认证的接口。
-
-博客的写操作（新增、更新、删除、刷新）需要 `readwrite` 及以上角色，博客查询接口无需认证。
-
-#### 1. 注册
-
-**POST** `/auth/register`
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `username` | string | **是** | 用户名（3-32 个字符） |
-| `password` | string | **是** | 密码（至少 6 个字符） |
-
-**成功响应 `201`：**
-
-首个注册用户直接成为管理员并返回 token：
-
-```json
-{
-  "res": true,
-  "user": { "id": 1, "username": "admin", "role": "admin", "status": "active" },
-  "token": "eyJhbGciOiJIUzI1NiIs..."
-}
-```
-
-后续注册用户进入待审核状态，不返回 token：
-
-```json
-{
-  "res": true,
-  "user": { "id": 2, "username": "alice", "role": "readonly", "status": "pending" },
-  "pending": true,
-  "message": "registration pending approval"
-}
-```
-
-| 错误码 | 场景 |
+| 命令 | 作用 |
 |---|---|
-| 400 | 用户名或密码不符合要求 |
-| 409 | 用户名已存在 |
-| 429 | 待审核账号已达到 `maxPendingRegistrations` 上限 |
-
-#### 2. 登录
-
-**POST** `/auth/login`
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `username` | string | **是** | 用户名 |
-| `password` | string | **是** | 密码 |
-
-**成功响应：**
-
-```json
-{
-  "res": true,
-  "user": { "id": 1, "username": "admin", "role": "admin" },
-  "token": "eyJhbGciOiJIUzI1NiIs..."
-}
-```
-
-| 错误码 | 场景 |
-|---|---|
-| 400 | 缺少用户名或密码 |
-| 401 | 用户名或密码错误 |
-| 403 | 账号待审核（`account pending approval`）或已禁用（`account is disabled`） |
-
-#### 3. 获取当前用户信息
-
-**GET** `/auth/me`
-
-需要认证（携带 `Authorization: Bearer <token>`）。
-
-**响应：**
-
-```json
-{
-  "res": true,
-  "user": { "userId": 1, "username": "admin", "role": "admin" },
-  "local": true
-}
-```
-
-`local` 表示本次请求来自本机（loopback）。前端据此决定非图片附件是“系统默认程序打开”（本机）还是“浏览器预览 / 下载”（其他设备）。
-
-#### 认证方式
-
-在需要认证的接口，请求头中添加：
-
-```
-Authorization: Bearer <token>
-```
+| `npm install` | 安装后端依赖 |
+| `npm run dev` | 后端热重载启动（nodemon） |
+| `npx tsx src/index.ts` | 后端单次启动 |
+| `npm run desktop:install` | 安装桌面端依赖 |
+| `npm run desktop` | 启动桌面版桌宠 |
+| `cd desktop; npm start` | 同上，在 desktop 目录内启动 |
+| `cd desktop; npm run dist` | 打包 Windows portable 可执行文件 |
+| `startBackend.bat` | 快捷脚本，等价于切到根目录后 `npm run dev` |
 
 ---
 
-### 三、用户管理 API（仅管理员）
+## 七、配置说明
 
-所有接口都需要 `admin` 角色，并在请求头携带 `Authorization: Bearer <token>`。
-
-新注册用户以 `pending` 状态出现在用户列表最前方，管理员可以：
-
-- 审核通过：`PATCH /users/:id`，body `{ "status": "active" }`；
-- 拒绝注册：`DELETE /users/:id`，该用户数据会被删除，无法登录。
-
-#### 1. 用户列表
-
-**GET** `/users`
-
-| 参数 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `search` | string | 否 | 按用户名模糊搜索 |
-| `role` | string | 否 | 角色筛选：`admin` / `readwrite` / `readonly` |
-| `status` | string | 否 | 状态筛选：`pending` / `active` / `disabled` |
-| `page` | string | 否 | 页码，默认 1 |
-| `pageSize` | string | 否 | 每页条数，默认 20，最大 100 |
-| `sort` | string | 否 | 排序字段：`id` / `username` / `role` / `status` / `created_at` / `last_login_at` |
-| `order` | string | 否 | `asc` / `desc`，默认 `asc` |
-
-未显式指定 `sort` 时，`pending` 账号始终排在列表最前面。
-
-**响应：**
-
-```json
-{
-  "res": true,
-  "total": 4,
-  "page": 1,
-  "pageSize": 20,
-  "pendingCount": 2,
-  "users": [
-    { "id": 2, "username": "alice", "role": "readonly", "status": "pending", "createdAt": "2026-01-01 10:00:00", "lastLoginAt": null }
-  ]
-}
-```
-
-#### 2. 用户详情
-
-**GET** `/users/:id`
-
-#### 3. 创建用户
-
-**POST** `/users`
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `username` | string | **是** | 3-32 个字符，唯一 |
-| `password` | string | **是** | 至少 6 个字符 |
-| `role` | string | 否 | 默认 `readonly`；不支持创建 `admin`（返回 400） |
-| `status` | string | 否 | 默认 `active` |
-
-#### 4. 修改用户
-
-**PATCH** `/users/:id`
-
-可传字段：`username`、`password`（重置密码）、`role`、`status`。
-
-`status` 可取 `active` 或 `disabled`；`pending` 只由注册产生，审核通过时将其改为 `active`。
-
-保护规则：
-
-- 不能修改自己的角色或状态；
-- 系统有且只有一个管理员：不支持把其他用户设为 `admin`（返回 400）；
-- 管理员账号必须保持 `active`；
-- 系统必须至少保留一个可用的管理员（不能降级、禁用或删除最后一个 active 管理员）。
-
-#### 5. 删除用户
-
-**DELETE** `/users/:id`
-
-- 不能删除当前登录账号；
-- 删除时会级联清理该用户的待办、分类、标签、附件记录及附件文件；
-- 拒绝待审核注册申请同样使用此接口，删除后该账号无法登录。
-
-#### 6. 迁移用户数据
-
-**POST** `/users/:id/transfer`
-
-把 `:id` 用户的全部待办数据迁移给另一个用户（仅管理员）。
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `targetUserId` | number | **是** | 目标用户 ID，不能与源用户相同 |
-
-迁移规则：
-
-- 迁移分类、标签、待办和附件；待办相关的完成记录、提醒、通知日志随待办一起保留；
-- 目标用户已有同名同级分类、同名标签时自动复用并合并，不产生重复数据；
-- 源用户的分类、标签、待办和附件会被清空（账号本身保留）；
-- 附件文件会从源用户目录移动到目标用户目录。
-
-**响应：**
-
-```json
-{
-  "res": true,
-  "message": "transferred",
-  "stats": { "categories": 3, "tags": 2, "todos": 12, "images": 4 }
-}
-```
-
----
-
-### 四、数据共享 API
-
-待办数据支持按文件夹（含子文件夹）或收件箱共享给其他用户，共享分两档权限：
-
-| 权限 | 说明 |
-|---|---|
-| `readonly` | 只读：可以查看共享范围内的任务，不能新增、修改、删除 |
-| `write` | 可编辑：可以对共享范围内的任务执行增删改 |
-
-说明：
-
-- 共享只能由数据所有者创建；管理员可以在共享列表中查看全部共享，并可代为调整权限或取消共享；
-- 系统角色为 `readonly` 的账号仍不能执行任何写操作，共享写权限对 `readwrite` 及以上角色生效；
-- 共享任务在任务接口中会返回 `ownerId`、`ownerUsername`、`permission`、`shared` 字段，便于前端标记来源；
-- 共享文件夹本身只能由所有者重命名、移动或删除，被共享者只操作其中的任务；
-- 在共享文件夹中新建的任务归属文件夹所有者，被共享者不能把任务移动到其他人的文件夹；
-- 收件箱共享支持查看和编辑已有任务，但新建任务始终进入自己的收件箱。
-
-#### 1. 共享可选项
-
-**GET** `/todo-shares/options`
-
-返回当前用户可共享的文件夹（含 `path` 与 `taskCount`）、收件箱任务数、可共享的启用用户，以及当前用户是否为管理员（`isAdmin`）。
-
-#### 2. 共享列表
-
-**GET** `/todo-shares?scope=mine|received|all`
-
-| scope | 说明 |
-|---|---|
-| `mine` | 我共享出去的（默认） |
-| `received` | 共享给我的 |
-| `all` | 全部共享（仅管理员） |
-
-每条记录包含 `categoryPath`（文件夹路径）、`permission`、所有者与被共享者用户名。
-
-#### 3. 创建共享
-
-**POST** `/todo-shares`
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `granteeId` | number | **是** | 被共享用户 ID，不能是自己 |
-| `scope` | string | **是** | `category` 或 `inbox` |
-| `categoryId` | number | scope=category 时必填 | 自己的文件夹 ID |
-| `permission` | string | 否 | `readonly`（默认）或 `write` |
-
-重复共享同一范围时直接更新权限并返回 200；新建返回 201。
-
-#### 4. 修改共享权限
-
-**PATCH** `/todo-shares/:id`
-
-```json
-{ "permission": "write" }
-```
-
-仅数据所有者或管理员可操作。
-
-#### 5. 取消共享
-
-**DELETE** `/todo-shares/:id`
-
-仅数据所有者或管理员可操作。
-
----
-
-### 五、博客文章 API
-
-#### 1. 查询博客列表 / 单篇（无需认证）
-
-**GET** `/blogs`
-
-支持按标签、分类筛选，以及分页和排序。
-
-| 参数 | 类型 | 必需 | 默认值 | 说明 |
-|---|---|---|---|---|
-| `id` | string | 否 | — | 传入时返回单篇博客 |
-| `search` | string | 否 | — | 全文搜索关键词，同时匹配标题/摘要/内容 |
-| `tags` | string / string[] | 否 | — | 标签筛选，多个取交集 |
-| `categories` | string / string[] | 否 | — | 分类筛选，递归匹配子分类 |
-| `page` | string | 否 | `"1"` | 页码 |
-| `pageSize` | string | 否 | `"20"` | 每页条数（1-100） |
-| `sort` | `"date"` / `"updated"` | 否 | `"date"` | 排序字段 |
-| `order` | `"asc"` / `"desc"` | 否 | `"desc"` | 排序方向 |
-
-**请求示例：**
-
-```
-GET /gitstatus/api/blogs?tags=React&categories=技术&page=1&pageSize=10
-GET /gitstatus/api/blogs?search=入门指南&page=1
-GET /gitstatus/api/blogs?id=1
-```
-
-**搜索说明：**
-
-- 不区分大小写，模糊匹配
-- 同时搜索 title、excerpt 和文件内容（自动读取 .md 文件）
-- 内容匹配时，通过 `searchResult` 字段返回关键词前后各 20 字符的摘要片段（已去除 Markdown 格式），`content` 保持原始路径
-- 可与 tags、categories、分页、排序等参数组合使用
-
-**列表响应：**
-
-```json
-{
-  "res": true,
-  "total": 42,
-  "page": 1,
-  "pageSize": 20,
-  "blogs": [
-    {
-      "id": 1,
-      "title": "我的文章",
-      "date": "2025-01-01 10:00:00",
-      "updated": "2025-01-02 12:00:00",
-      "tags": ["React", "前端"],
-      "categories": ["技术", "前端"],
-      "excerpt": "摘要内容",
-      "searchResult": ""，
-      "content": "/技术/前端/我的文章.md",
-      "cover": "",
-      "comment": []
-    }
-  ]
-}
-```
-
-**单篇响应：**
-
-```json
-{ "res": true, "blog": { ... } }
-```
-
-| 错误码 | 场景 |
-|---|---|
-| 400 | id 无效 |
-| 404 | 博客不存在 |
-
----
-
-#### 2. 新增博客（需读写及以上权限）
-
-**POST** `/blogs`
-
-支持两种方式：JSON 和 multipart/form-data 文件上传。
-
-**方式一：JSON**
-
-```json
-POST /gitstatus/api/blogs
-Content-Type: application/json
-
-{
-  "title": "React入门指南",
-  "tags": ["React", "前端"],
-  "categories": ["技术", "前端", "React"],
-  "excerpt": "一篇React入门教程",
-  "content": "# React入门\n\nReact 是一个 JavaScript 库。",
-  "cover": "https://example.com/cover.jpg"
-}
-```
-
-**方式二：文件上传**
-
-```bash
-curl -X POST /gitstatus/api/blogs \
-  -F "title=React入门指南" \
-  -F 'tags=["React","前端"]' \
-  -F 'categories=["技术","前端","React"]' \
-  -F "excerpt=一篇React入门教程" \
-  -F "file=@article.md"
-```
-
-| 字段 | 类型 | 必需 | 默认值 | 说明 |
-|---|---|---|---|---|
-| `title` | string | **是** | — | 博客标题，同时作为 md 文件名 |
-| `date` | string | 否 | 当前时间 | 创建时间 `YYYY-MM-DD HH:mm:ss` |
-| `tags` | string[] | 否 | `[]` | 标签数组（form-data 中传 JSON 字符串） |
-| `categories` | string[] | 否 | `[]` | 分类数组，按顺序构成文件夹层级 |
-| `excerpt` | string | 否 | `""` | 摘要 |
-| `content` | string | 否 | `""` | 正文内容（JSON 方式） |
-| `file` | File | 否 | — | 上传的 .md 文件（优先级高于 content） |
-| `cover` | string | 否 | `""` | 封面图 URL |
-| `comment` | unknown[] | 否 | `[]` | 评论数据 |
-
-**文件系统效果：** 当传入 `categories` 时，自动在 `src/docs/` 下创建对应的多级文件夹，并生成 `{title}.md` 文件。
-
-```
-src/docs/
-  └── 技术/
-      └── 前端/
-          └── React/
-              └── React入门指南.md
-```
-
-**成功响应 `201`：**
-
-```json
-{
-  "res": true,
-  "blog": {
-    "id": 2,
-    "title": "React入门指南",
-    "date": "2025-04-14 10:30:00",
-    "updated": "2025-04-14 10:30:00",
-    "tags": ["React", "前端"],
-    "categories": ["技术", "前端", "React"],
-    "excerpt": "一篇React入门教程",
-    "content": "/技术/前端/React/React入门指南.md",
-    "cover": "https://example.com/cover.jpg",
-    "comment": []
-  }
-}
-```
-
-| 错误码 | 场景 |
-|---|---|
-| 400 | 缺少标题 / 分类路径不合法 / 标题无法生成文件名 |
-| 500 | 服务器内部错误 |
-
----
-
-#### 3. 更新博客（需读写及以上权限）
-
-**PATCH** `/blogs/:id`
-
-部分更新博客信息，`updated` 自动刷新为当前时间。支持 JSON 和 multipart/form-data 两种方式。
-
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `title` | string | 否 | 新标题（变化时自动重命名文件） |
-| `tags` | string[] | 否 | 新标签数组（整体替换） |
-| `categories` | string[] | 否 | 新分类数组（变化时自动移动文件到新目录） |
-| `excerpt` | string | 否 | 新摘要 |
-| `content` | string | 否 | 新正文内容（写入文件，不改变数据库路径） |
-| `file` | File | 否 | 上传 .md 文件替代 content（优先级更高） |
-| `cover` | string | 否 | 新封面 URL |
-| `comment` | unknown[] | 否 | 新评论数据 |
-
-**文件联动逻辑：**
-
-- `title` 变化 → 文件重命名
-- `categories` 变化 → 文件移动到新目录，旧空目录自动清理
-- `content` / `file` 传入 → 内容写入对应 md 文件
-
-**响应示例：**
-
-```json
-{ "res": true, "blog": { ... } }
-```
-
-| 错误码 | 场景 |
-|---|---|
-| 400 | id 无效 / 路径不合法 |
-| 404 | 博客不存在 / md 文件不存在 |
-
----
-
-#### 4. 删除博客（需读写及以上权限）
-
-**DELETE** `/blogs/:id`
-
-删除博客记录，同时删除对应的 md 文件并递归清理空目录。
-
-**响应：**
-
-```json
-{ "res": true, "message": "deleted" }
-```
-
-| 错误码 | 场景 |
-|---|---|
-| 400 | id 无效 |
-| 404 | 博客不存在 |
-
----
-
-#### 5. 刷新博客（双向同步，需管理员权限）
-
-**POST** `/blogs/refresh`
-
-扫描 `src/docs/` 目录与数据库进行双向同步：
-
-- 文件存在但数据库无记录 → 自动创建博客记录
-- 数据库有记录但文件已不存在 → 自动删除博客记录
-
-**响应：**
-
-```json
-{
-  "res": true,
-  "added": 2,
-  "removed": 1,
-  "addedFiles": ["/技术/新文章.md"],
-  "removedFiles": ["/技术/已删除的文章.md"]
-}
-```
-
----
-
-### 六、静态资源与前端页面
-
-| 路径 | 说明 |
-|---|---|
-| `/pages/index.html` | Git 洞察页面 |
-| `/pages/todo.html` | 待办清单页面 |
-| `/pages/shares.html` | 数据共享页面（所有登录用户） |
-| `/pages/account.html` | 账号管理页面（仅管理员） |
-| `/pages/auth-test.html` | Auth API 测试页面 |
-| `/pages/assets/styles/*` | 共享主题与组件样式（`theme.css` / `components.css` / `pet-widget.css`） |
-| `/pages/assets/js/*` | 共享前端脚本（`auth-client.js` / `account.js` / `shares.js` / `pet-widget.js`） |
-| `/pages/assets/vendor/*` | 本地第三方库（Chart.js、chartjs-plugin-zoom） |
-| `/gitstatus/api/docs/*` | 博客文档静态文件 (`src/docs/`) |
-
-所有页面均不依赖外部 CDN，第三方 JS 已放入 `src/pages/assets/vendor/`。页面统一使用 `theme.css` 中的设计令牌，以及 `components.css` 中的按钮、表单、卡片、表格、弹窗、Toast、账号信息卡等组件。
-
-顶部导航（品牌、导航链接、账号图标）在业务页面中保持一致；将鼠标悬停在账号图标上会显示账号信息卡片，其中包含角色、状态、最近登录时间，以及退出登录和账号管理入口（仅管理员可见）。账号管理页支持审核新注册用户（通过 / 拒绝）、将某个用户的待办数据迁移给另一个用户（含分类、标签、待办、完成记录、提醒与附件）。待办页支持上传图片与其他文件：图片可预览、可粘贴截图或直接拖入上传，预览支持滚轮 / 双指缩放、拖拽平移、双击切换与快捷缩放（+ / - / 0），其他文件只保存与下载、不做预览。数据共享页支持管理「共享给我的」「我共享出去的」以及（管理员）「全部共享」；待办页会用共享标记展示来自其他用户的文件夹与任务，只读共享会自动禁用编辑入口。
-
-#### 桌宠挂件
-
-`pet-widget.css` + `pet-widget.js` 是一个通用的页面桌宠组件，`index / todo / shares / account` 四个页面均已引入：
-
-- 默认停在右下角，可拖拽并吸附左右下边缘，吸附到左半屏时自动镜像转身；位置、静音、已读提醒都保存在 `localStorage`
-- 左键点击桌宠只弹出小气泡：根据当天「总数 / 已完成 / 未完成 / 逾期」自动切换文案（如「今天没事喵，耍起喵～」「今天所有 5 条待办都完成啦喵！」「今天还有 3 条待办喵，一共 5 条待办喵」），带完成进度条与提醒时间，约 7 秒自动收起
-- 桌宠右上角的菜单按钮才打开完整面板（当天统计、前 3 条待办、下一条提醒与设置入口），角标显示当天待完成数量
-- 轮询 `GET /todo-widget/summary`：当天待办统计、下一条提醒与最近的提醒事件；触发提醒时桌宠抖动并弹出气泡，可选提示音（WebAudio 合成，无音频文件）
-- 完整面板右上角「设置」打开气泡内嵌设置面板（无独立页面），按账号保存到 `pet_settings`：
-  - **间隔提醒**：有未完成待办时每隔 N 分钟冒泡，文案如「老大还有 3 件事未完成喵～」；可选仅在工作时间内提醒（默认全天）
-  - **上下班提醒**：到上班 / 下班时间后的 10 分钟窗口内，如仍有未完成待办则提醒一次
-  - **截止提醒**：单次任务按截止日期 + 截止时间、重复任务按重复结束日期提前 X 分钟提醒；只有日期没有具体时间的任务按下班时间计算，0 表示关闭
-- 已授予浏览器通知权限时同步发送系统通知；未授予时不会主动弹授权框
-- 移动端：触摸拖拽不会带动页面滚动，气泡宽度自适应屏幕
-- 角色素材：在气泡「设置 → 素材设置」里导入图片（PNG / JPG / WebP / GIF，最大 2MB），图片保存在服务端 `src/output/pet-assets/`，按账号同步，换设备登录同一账号也能看到；桌宠大小、镜像与提醒音只保存在当前浏览器（镜像默认关闭，导入素材保持原方向）
-- 未上传账号素材时使用内置内联 SVG 造型；也可以用静态图片作为默认造型，二选一：
-  - 在脚本标签上直接声明（四个页面各改一处）：`<script src="/pages/assets/js/pet-widget.js" data-pet-image="/pages/assets/pet/whale.png"></script>`
-  - 或在引入脚本前设置全局配置：
-
-```html
-<script>
-  window.GITSTATUS_PET_CONFIG = { petImage: '/pages/assets/pet/whale.png' };
-</script>
-<script src="/pages/assets/js/pet-widget.js"></script>
-```
-
-图片缺失或加载失败时会自动回退到内置 SVG 造型。还支持 `data-pet-api`、`data-pet-todo-url`（或对应的 `apiBase` / `todoUrl` 配置项）覆盖接口前缀与待办页地址。账号素材的读取需要登录态，挂件会带 Token 取回图片后再展示。
-
-> 参考项目 `MeteorNOX/DeepSeek-Balance-Whale-Widget` 的代码为 MIT 协议，但其 `assets/` 下的美术素材（图片 / 动图 / 音效）明确不在 MIT 覆盖范围内、不授予再许可。若要使用其中素材，需先获得作者授权，或替换为自己的图片。
-
----
-
-### 七、数据结构
-
-#### BlogPost（API 返回格式）
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | number | 博客 ID |
-| `title` | string | 标题 |
-| `date` | string | 创建时间 |
-| `updated` | string | 更新时间 |
-| `tags` | string[] | 标签数组 |
-| `categories` | string[] | 分类数组（对应文件夹层级） |
-| `excerpt` | string | 摘要 |
-| `content` | string | md 文件相对路径 |
-| `cover` | string | 封面 URL |
-| `comment` | unknown[] | 评论数据 |
-| `searchResult` | string? | 搜索时内容匹配的上下文片段（仅搜索命中文件内容时返回） |
-
----
-
-### 八、文件上传限制
-
-#### 博客文件
-
-| 项目 | 限制 |
-|---|---|
-| 最大文件大小 | 10MB |
-| 允许文件类型 | `.md` 文件（text/markdown、text/plain） |
-| 上传字段名 | `file` |
-
-#### 待办附件
-
-| 类型 | 数量上限 | 单个大小上限 | 允许类型 |
-|---|---:|---:|---|
-| 图片 | 5 | 8 MB | JPEG / PNG / GIF / WebP / BMP / AVIF，可预览 |
-| 其他文件 | 10 | 32 MB | 常见文档与压缩包；可执行文件后缀（`.exe`、`.msi`、`.bat`、`.cmd`、`.ps1`、`.js`、`.jar` 等）被拒绝 |
-
-上传接口：`POST /todos/:id/attachments`，字段名 `images`、`files` 或 `file`；待办弹窗支持把文件直接拖入附件区、粘贴截图（Ctrl+V）上传，其他文件只保存与下载、不提供预览。附件详情中的点击行为按访问来源区分：本机访问时调用 `GET /todo-attachments/:id/open` 由后端用系统默认程序打开；其他设备上 PDF、文本、音视频在浏览器新标签预览，其余类型直接下载。旁边的下载按钮始终可保存文件。
-
----
-
-### 九、日志
-
-服务运行日志按日期自动切分，保存在 `src/output/logs/YYYY-MM-DD.log`，同时输出到控制台。
-
-**日志级别：**
-
-| 级别 | 说明 |
-|---|---|
-| `ACCESS` | HTTP 请求访问日志（方法、路径、状态码、耗时、IP） |
-| `INFO` | 常规信息（服务启动、注册尝试等） |
-| `WARN` | 警告（配置加载失败回退、文件删除失败等） |
-| `ERROR` | 错误（子进程 stderr、异常堆栈等） |
-
-**示例：**
-```
-[2026-04-14 10:32:15.123] [INFO] server running: http://localhost:65123
-[2026-04-14 10:32:20.456] [ACCESS] GET /gitstatus/api/blogs 200 12ms - ::1
-[2026-04-14 10:32:25.789] [WARN] [config] failed to read ...
-```
-
----
-
-### 十、配置文件
-
-`config/config.json`：
+### 后端 `config/config.json`
 
 | 字段 | 说明 | 默认值 |
 |---|---|---|
-| `allowedOrigins` | CORS 白名单 | `["http://localhost:65123"]` |
-| `jwtSecret` | JWT 签名密钥（生产环境请修改） | `"gitstatus-default-secret-please-change"` |
-| `jwtExpiresIn` | Token 过期时间 | `"7d"` |
-| `maxPendingRegistrations` | 同时待审核的最大注册数量（1-500） | `20` |
+| `allowedOrigins` | CORS 白名单，从别的设备访问时要加上对应 Origin | `["http://localhost:65123"]` |
+| `jwtSecret` | JWT 签名密钥，**对外提供前务必改掉** | `gitstatus-default-secret-please-change` |
+| `jwtExpiresIn` | Token 有效期 | `"7d"` |
+| `maxPendingRegistrations` | 同时处于待审核状态的注册数量上限（1-500） | `20` |
 
-`maxPendingRegistrations` 也可以通过环境变量 `MAX_PENDING_REGISTRATIONS` 覆盖，环境变量优先。
+可用环境变量 `MAX_PENDING_REGISTRATIONS` 覆盖最后一项，环境变量优先。
+
+### 桌面端 `desktop/config.json`
+
+```json
+{
+  "serverUrl": "http://localhost:30012"
+}
+```
+
+连接别的后端时改这里，或用环境变量临时覆盖（环境变量优先）：
+
+```powershell
+$env:GITSTATUS_URL = "http://192.168.1.10:30012"
+npm run desktop
+```
+
+### 调试开关
+
+| 变量 | 作用 |
+|---|---|
+| `GITSTATUS_URL` | 覆盖桌面端连接的后端地址 |
+| `MAX_PENDING_REGISTRATIONS` | 覆盖待审核注册上限 |
+| `PET_DEBUG=1` | 桌面端把交互细节写入 `desktop/pet-debug.log`（该文件已在 `.gitignore` 中） |
 
 ---
 
-### 十一、通用错误响应格式
+## 八、目录结构
 
-```json
-{ "res": false, "message": "错误描述" }
 ```
+gitStatus/
+├── config/config.json        # 后端配置
+├── src/
+│   ├── index.ts              # 后端入口：认证、用户、仓库、博客、静态托管、日志
+│   ├── todo.ts               # 待办、附件、数据共享、桌宠挂件接口
+│   ├── projects.ts           # 项目管理接口（启停、运行命令、端口、文件夹）
+│   ├── docs/                 # 博客 Markdown 正文
+│   ├── pages/                # 前端页面与共享资源（不依赖 CDN）
+│   │   ├── index.html        # Git 全景洞察
+│   │   ├── todo.html         # 待办清单（含注册/登录）
+│   │   ├── projects.html     # 项目管理
+│   │   ├── shares.html       # 数据共享
+│   │   ├── account.html      # 账号管理
+│   │   ├── desktop-login.html # 桌面版登录页（桌宠应用内窗口加载）
+│   │   ├── desktop-pet.html  # 旧版桌面渲染页（已被 desktop/renderer 取代）
+│   │   └── assets/           # styles / js / vendor
+│   └── output/               # 运行时数据（SQLite、日志、附件、素材），不入库
+├── desktop/                  # Electron 桌面版
+│   ├── main.js               # 主进程：窗口、托盘、轮询、提醒调度
+│   ├── preload.js            # 渲染进程最小窗口控制 API
+│   ├── lib/                  # HTTP 访问层、本地状态存储、文案
+│   ├── renderer/             # 桌宠窗 / 气泡窗 / 设置窗
+│   └── config.json           # 后端地址
+├── docs/                     # 项目文档（统一入口见 docs/README.md）
+│   └── screenshots/          # 文档截图，文件名保持与文中引用一致
+└── README.md                 # 本文：使用介绍
+```
+
+---
+
+## 九、常见问题
+
+**启动报端口被占用 / 直接 404 打不开页面**
+`npm run dev` 会先调 `npx kill-port 30012` 释放端口（首次需要联网拉取该包）。手动启动时先确认 30012 空闲；页面必须走 `/pages/xxx.html`，根路径会重定向到洞察页。
+
+**`npm install` 卡在 better-sqlite3**
+多半是 Node 版本低于 20 导致找不到预编译包，转而本地编译，需要 Python 与 VS Build Tools。切到 Node 20+ 重装即可。
+
+**其他设备访问时接口报跨域**
+把对应来源加进 `config/config.json` 的 `allowedOrigins`，例如 `["http://192.168.1.10:30012"]`。
+
+**桌面版打开是「连接失败」重试页**
+后端没启动或地址不对。启动后端后点「重新连接」，或检查 `desktop/config.json` 的 `serverUrl` / `GITSTATUS_URL`。
+
+**桌宠拖到副屏后位置乱了**
+显示器分辨率或缩放变化后，旧的保存坐标会被丢弃并回到右下角，属于预期行为；切换显示器可用设置面板的「显示器」下拉或托盘右键菜单。
+
+**忘了管理员密码 / 账号被自己禁掉了**
+直接改本机 SQLite：用任意 SQLite 客户端打开 `src/output/gitstatus.db`，修改 `users` 表的 `password_hash` 或 `status`。
+
+**注册后一直登录不了**
+除第一个账号外都需要管理员在 `/pages/account.html` 点「通过」。若待审核账号数已达 `maxPendingRegistrations` 上限，注册接口返回 `429`，先处理积压的审核。
+
+---
+
+## 十、文档索引
+
+| 文档 | 内容 |
+|---|---|
+| [docs/README.md](docs/README.md) | 文档总索引 |
+| [docs/页面说明/](docs/页面说明/通用交互与登录.md) | **每个页面的详细使用说明**（六篇）：通用交互与登录 · Git 全景洞察 · 待办清单 · 项目管理 · 数据共享 · 账号管理 |
+| [docs/后端API说明.md](docs/后端API说明.md) | 全部接口的参数表、权限、响应示例与错误码 |
+| [docs/桌面端使用说明.md](docs/桌面端使用说明.md) | 桌面版窗口架构、交互、配置、打包与已知限制 |
+| [docs/桌面版实现说明.md](docs/桌面版实现说明.md) | 桌面版实现过程记录 |
+| [docs/云存储方案与成本说明.md](docs/云存储方案与成本说明.md) | 附件与图片上对象存储的方案与成本测算 |
