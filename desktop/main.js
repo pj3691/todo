@@ -35,6 +35,18 @@ function readServerUrl() {
 }
 
 const serverUrl = readServerUrl();
+
+// PET_DEBUG=1 时把窗口诊断日志落到 desktop/pet-debug.log：
+// Windows 下 Electron 主进程的 stdout 在部分启动方式里不会回到终端，落盘最可靠。
+const debugLogPath = path.join(__dirname, "pet-debug.log");
+function debugLog(tag, message) {
+    if (process.env.PET_DEBUG !== "1") return;
+    try {
+        fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] [${tag}] ${message}\n`);
+    } catch {
+        /* 日志失败不影响运行 */
+    }
+}
 // 带上启动时间戳，避免 Electron 缓存住旧的桌宠 HTML，
 // 导致页面还在引用上一版 pet-widget.js（拖动/交互修复不生效）。
 const petUrl = `${serverUrl}/pages/desktop-pet.html?v=${Date.now()}`;
@@ -104,6 +116,8 @@ app.on("web-contents-created", (_event, contents) => {
 // Windows 下透明置顶窗在焦点切换后可能被普通窗口压下去，这里反复重新置顶
 function keepPetOnTop() {
     if (!petWin || petWin.isDestroyed() || petHidden) return;
+    // 待办/登录窗口打开时桌宠保持普通层级，不上浮抢占
+    if (overlaySuspended) return;
     petWin.setAlwaysOnTop(true, "screen-saver");
 }
 
@@ -152,8 +166,10 @@ function applyPetShape(regions) {
     }
 }
 
-// 待办/登录窗口打开时不再改动桌宠的鼠标状态。
-// 非 Windows 或窗口区域不可用时才回退到旧的整窗忽略方案。
+// 待办/登录窗口打开期间把桌宠降为普通层级：
+// 透明置顶窗（screen-saver 层级）会一直盖在待办窗口上，拖动待办窗口
+// 经过桌宠 420×720 舞台（包括完全透明的空区）时，置顶层与下层窗口
+// 会反复重新合成，表现为窗口尺寸/内容高频闪烁。
 function suspendPetOverlay() {
     overlaySuspended = true;
     // 打开待办/登录窗口不代表拖动还在继续，清掉可能残留的拖动状态，
@@ -162,23 +178,22 @@ function suspendPetOverlay() {
     petDragOffset = null;
     petDragDisplay = null;
     petHoverInside = null;
-    if (petShapeSupported || !petWin || petWin.isDestroyed()) return;
-    petWin.setIgnoreMouseEvents(true, { forward: true });
-    keepPetOnTop();
+    if (!petWin || petWin.isDestroyed()) return;
+    petWin.setAlwaysOnTop(false);
+    petWin.setIgnoreMouseEvents(true, { forward: false });
 }
 
 function restorePetOverlay() {
-    if (todoWin && !todoWin.isDestroyed()) return;
-    if (loginWin && !loginWin.isDestroyed()) return;
     overlaySuspended = false;
-    if (petShapeSupported || !petWin || petWin.isDestroyed() || petHidden) return;
+    if (!petWin || petWin.isDestroyed() || petHidden) return;
     petDragActive = false;
     petDragOffset = null;
     petDragDisplay = null;
     // 强制穿透后必须让 hover guard 重新判断一次；否则之前缓存的
     // petHoverInside=true 会让它提前 return，窗口关闭后桌宠点不动。
     petHoverInside = null;
-    petWin.setIgnoreMouseEvents(true, { forward: true });
+    petWin.setAlwaysOnTop(true, "screen-saver");
+    petWin.setIgnoreMouseEvents(!petShapeReady, { forward: true });
     keepPetOnTop();
     setTimeout(keepPetOnTop, 30);
 }
@@ -187,7 +202,8 @@ function startPetHoverGuard() {
     if (petHoverTimer) return;
     petHoverTimer = setInterval(() => {
         if (!petWin || petWin.isDestroyed()) return;
-        if (petHidden) {
+        // 待办/登录窗口打开时不切换穿透，避免与下层窗口拖动互相触发
+        if (petHidden || overlaySuspended) {
             petHoverInside = null;
             return;
         }
@@ -215,6 +231,8 @@ function startPetTopGuard() {
     // 只补 always-on-top 标记，不再周期性 moveTop；后者会干扰浏览器标签拖拽。
     topGuardTimer = setInterval(() => {
         if (!petWin || petWin.isDestroyed() || petHidden) return;
+        // 待办/登录窗口打开或拖动中不重设层级，避免叠加重合成
+        if (overlaySuspended || petDragActive) return;
         petWin.setAlwaysOnTop(true, "screen-saver");
     }, 5000);
     topGuardTimer.unref?.();
@@ -224,18 +242,27 @@ function displayStateFile() {
     return path.join(app.getPath("userData"), "display-state.json");
 }
 
+// 读取上次保存的窗口位置。额外记录分辨率与缩放，用于判断旧坐标是否还能复用。
 function readDisplayState() {
     try {
         const state = JSON.parse(fs.readFileSync(displayStateFile(), "utf8"));
-        if (state && Number.isFinite(state.x) && Number.isFinite(state.y)) {
-            petWindowX = Number(state.x);
-            petWindowY = Number(state.y);
-        }
-        if (state && Number.isFinite(state.displayId)) return state.displayId;
+        if (!state || typeof state !== "object") return null;
+        return {
+            displayId: Number.isFinite(state.displayId) ? Number(state.displayId) : null,
+            x: Number.isFinite(state.x) ? Number(state.x) : null,
+            y: Number.isFinite(state.y) ? Number(state.y) : null,
+            scaleFactor: Number.isFinite(state.scaleFactor) ? Number(state.scaleFactor) : null,
+            workArea:
+                state.workArea &&
+                Number.isFinite(state.workArea.width) &&
+                Number.isFinite(state.workArea.height)
+                    ? { width: Number(state.workArea.width), height: Number(state.workArea.height) }
+                    : null
+        };
     } catch {
         /* 首次启动或状态文件损坏 */
+        return null;
     }
-    return null;
 }
 
 function saveDisplayState() {
@@ -246,9 +273,16 @@ function saveDisplayState() {
             petWindowX = bounds.x;
             petWindowY = bounds.y;
         }
+        const display = getSelectedDisplay();
         fs.writeFileSync(
             displayStateFile(),
-            JSON.stringify({ displayId: petDisplayId, x: petWindowX, y: petWindowY }),
+            JSON.stringify({
+                displayId: petDisplayId,
+                x: petWindowX,
+                y: petWindowY,
+                scaleFactor: display.scaleFactor,
+                workArea: { width: display.workArea.width, height: display.workArea.height }
+            }),
             "utf8"
         );
     } catch {
@@ -280,6 +314,14 @@ function getVirtualBounds() {
     };
 }
 
+// 把 DIP 坐标对齐到物理像素网格：125% / 150% 缩放下整数 DIP 只对应
+// 1.25 / 1.5 个物理像素，窗口落在半个像素上时 DWM 会重采样整窗位图，
+// 拖动表现为边缘闪烁、内容发虚。
+function alignDip(value, scaleFactor) {
+    const scale = Number(scaleFactor) || 1;
+    return Math.round(value * scale) / scale;
+}
+
 // 统一生成主屏 / 副屏名称，托盘菜单和设置面板共用
 function describeDisplays() {
     const primaryId = screen.getPrimaryDisplay().id;
@@ -287,10 +329,19 @@ function describeDisplays() {
     return screen.getAllDisplays().map((display) => {
         const primary = display.id === primaryId;
         const name = primary ? "主显示器" : `副显示器 ${++secondaryIndex}`;
+        // display.size / workArea 是 DIP（已经被系统缩放除过），直接展示会出现
+        // 1707×960 这类逻辑分辨率，和系统设置里的物理分辨率对不上。
+        const scale = Number(display.scaleFactor) || 1;
+        const width = Math.round(display.size.width * scale);
+        const height = Math.round(display.size.height * scale);
+        const scaleText = Math.abs(scale - 1) > 0.001 ? ` · 缩放 ${Math.round(scale * 100)}%` : "";
         return {
             id: display.id,
             primary,
-            label: `${name} · ${display.workArea.width}×${display.workArea.height}`,
+            label: `${name} · ${width}×${height}${scaleText}`,
+            scaleFactor: scale,
+            width,
+            height,
             display
         };
     });
@@ -312,12 +363,25 @@ function movePetToDisplay(displayId) {
     updateTrayMenu();
 }
 
-function handleDisplaysChanged() {
+function handleDisplaysChanged(changedMetrics) {
     if (!petWin || petWin.isDestroyed()) return;
     const current = screen.getAllDisplays().find((display) => display.id === petDisplayId);
+    // display-metrics-changed 会带上变化项；分辨率 / 缩放 / 工作区变化后
+    // 之前保存的坐标不再可靠，先回到目标显示器右下角再重新保存。
+    const metrics = Array.isArray(changedMetrics) ? changedMetrics : null;
+    const layoutChanged =
+        !metrics || metrics.some((key) => key === "bounds" || key === "workArea" || key === "scaleFactor");
     if (!current) {
         // 当前显示器被拔掉时回到主屏
         petDisplayId = screen.getPrimaryDisplay().id;
+        petWindowX = null;
+        petWindowY = null;
+        petAnchorRight = true;
+        petAnchorBottom = true;
+        if (petWin && !petWin.isDestroyed()) {
+            petWin.webContents.send("pet:anchor", { right: true, bottom: true });
+        }
+    } else if (layoutChanged) {
         petWindowX = null;
         petWindowY = null;
         petAnchorRight = true;
@@ -489,7 +553,8 @@ function showPet() {
     if (petShapeSupported) {
         petWin.setIgnoreMouseEvents(!petShapeReady, { forward: true });
     } else if (overlaySuspended) {
-        petWin.setIgnoreMouseEvents(true, { forward: true });
+        // 待办/登录窗口打开时保持完全不接收鼠标（不转发），避免拖动下层窗口时互相干扰
+        petWin.setIgnoreMouseEvents(true, { forward: false });
         if (todoWin && !todoWin.isDestroyed()) {
             todoWin.show();
             todoWin.focus();
@@ -538,18 +603,27 @@ function createPetWindow() {
     overlaySuspended = Boolean(
         (todoWin && !todoWin.isDestroyed()) || (loginWin && !loginWin.isDestroyed())
     );
-    const savedDisplayId = readDisplayState();
+    // 上次保存的位置只有在分辨率和缩放都没变时才复用，否则按新布局回到右下角
+    const saved = readDisplayState();
     const displays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
-    const display = displays.find((item) => item.id === savedDisplayId) || primary;
+    const display = displays.find((item) => item.id === saved?.displayId) || primary;
     petDisplayId = display.id;
+    const scale = Number(display.scaleFactor) || 1;
+    const layoutChanged =
+        (saved?.scaleFactor != null && Math.abs(saved.scaleFactor - scale) > 0.001) ||
+        (saved?.workArea != null &&
+            (saved.workArea.width !== display.workArea.width ||
+                saved.workArea.height !== display.workArea.height));
+    petWindowX = layoutChanged ? null : (saved?.x ?? null);
+    petWindowY = layoutChanged ? null : (saved?.y ?? null);
     const area = display.workArea;
-    const defaultX = Math.round(area.x + area.width - PET_STAGE_WIDTH);
-    const defaultY = Math.round(area.y + area.height - PET_STAGE_HEIGHT);
-    const maxX = Math.max(area.x, area.x + area.width - PET_STAGE_WIDTH);
-    const maxY = Math.max(area.y, area.y + area.height - PET_STAGE_HEIGHT);
-    const x = Math.round(Math.max(area.x, Math.min(Number.isFinite(petWindowX) ? petWindowX : defaultX, maxX)));
-    const y = Math.round(Math.max(area.y, Math.min(Number.isFinite(petWindowY) ? petWindowY : defaultY, maxY)));
+    const defaultX = alignDip(area.x + area.width - PET_STAGE_WIDTH, scale);
+    const defaultY = alignDip(area.y + area.height - PET_STAGE_HEIGHT, scale);
+    const maxX = Math.max(area.x, alignDip(area.x + area.width - PET_STAGE_WIDTH, scale));
+    const maxY = Math.max(area.y, alignDip(area.y + area.height - PET_STAGE_HEIGHT, scale));
+    const x = alignDip(Math.max(area.x, Math.min(Number.isFinite(petWindowX) ? petWindowX : defaultX, maxX)), scale);
+    const y = alignDip(Math.max(area.y, Math.min(Number.isFinite(petWindowY) ? petWindowY : defaultY, maxY)), scale);
 
     petWin = new BrowserWindow({
         x,
@@ -605,6 +679,22 @@ function createPetWindow() {
     keepPetOnTop();
     startPetTopGuard();
     startPetHoverGuard();
+
+    // 诊断开关：PET_DEBUG=1 时把窗口尺寸 / 位置变化打到终端，
+    // 用来定位拖动时的高频 resize / 闪烁问题。
+    if (process.env.PET_DEBUG === "1") {
+        const logPetBounds = (tag) => {
+            if (!petWin || petWin.isDestroyed()) return;
+            const b = petWin.getBounds();
+            debugLog("pet", `${tag} ${b.x},${b.y} ${b.width}x${b.height}`);
+        };
+        petWin.on("resize", () => logPetBounds("resize"));
+        petWin.on("will-resize", () => logPetBounds("will-resize"));
+        petWin.on("move", () => logPetBounds("move"));
+        petWin.webContents.on("console-message", (_event, _level, message) => {
+            debugLog("pet-renderer", message);
+        });
+    }
 
     petWin.on("focus", keepPetOnTop);
     petWin.on("blur", () => {
@@ -679,13 +769,15 @@ function createPetWindow() {
 // 分辨率或显示器变化时，把局部舞台放回目标显示器右下角。
 function resizePetWindow() {
     if (!petWin || petWin.isDestroyed()) return;
-    const area = getSelectedDisplay().workArea;
-    const defaultX = Math.round(area.x + area.width - PET_STAGE_WIDTH);
-    const defaultY = Math.round(area.y + area.height - PET_STAGE_HEIGHT);
-    const maxX = Math.max(area.x, area.x + area.width - PET_STAGE_WIDTH);
-    const maxY = Math.max(area.y, area.y + area.height - PET_STAGE_HEIGHT);
-    const x = Math.round(Math.max(area.x, Math.min(Number.isFinite(petWindowX) ? petWindowX : defaultX, maxX)));
-    const y = Math.round(Math.max(area.y, Math.min(Number.isFinite(petWindowY) ? petWindowY : defaultY, maxY)));
+    const display = getSelectedDisplay();
+    const area = display.workArea;
+    const scale = Number(display.scaleFactor) || 1;
+    const defaultX = alignDip(area.x + area.width - PET_STAGE_WIDTH, scale);
+    const defaultY = alignDip(area.y + area.height - PET_STAGE_HEIGHT, scale);
+    const maxX = Math.max(area.x, alignDip(area.x + area.width - PET_STAGE_WIDTH, scale));
+    const maxY = Math.max(area.y, alignDip(area.y + area.height - PET_STAGE_HEIGHT, scale));
+    const x = alignDip(Math.max(area.x, Math.min(Number.isFinite(petWindowX) ? petWindowX : defaultX, maxX)), scale);
+    const y = alignDip(Math.max(area.y, Math.min(Number.isFinite(petWindowY) ? petWindowY : defaultY, maxY)), scale);
     petWindowX = x;
     petWindowY = y;
     petWin.setBounds({ x, y, width: PET_STAGE_WIDTH, height: PET_STAGE_HEIGHT });
@@ -704,16 +796,12 @@ function movePetStage(x, y, petSize) {
     const maxX = area.x + area.width - PET_STAGE_WIDTH;
     const minY = area.y - insetY;
     const maxY = area.y + area.height - PET_STAGE_HEIGHT;
-    const nextX = Math.round(Math.max(minX, Math.min(x, Math.max(minX, maxX))));
-    const nextY = Math.round(Math.max(minY, Math.min(y, Math.max(minY, maxY))));
+    const nextX = alignDip(Math.max(minX, Math.min(x, Math.max(minX, maxX))), display.scaleFactor);
+    const nextY = alignDip(Math.max(minY, Math.min(y, Math.max(minY, maxY))), display.scaleFactor);
     petWindowX = nextX;
     petWindowY = nextY;
     petDisplayId = display.id;
     petWin.setPosition(nextX, nextY);
-}
-
-function getPetCompactSize(size) {
-    return Math.round(Math.max(40, Number(size) || 76) + PET_STAGE_MARGIN * 2);
 }
 
 function clampToStage(value, origin, length, size) {
@@ -756,34 +844,76 @@ function movePetWindowDragFrame() {
         petDisplayId = current.id;
     }
     const displayArea = current.workArea;
-    const compact = getPetCompactSize(petDragOffset.size);
+    // 窗口尺寸在拖动全程保持不变（透明窗每次 resize 都要重新合成，高 DPI 下会闪一下），
+    // 只按当前锚点把窗口里用不到的部分“藏”到光标外侧。
+    const size = petDragOffset.size;
+    const insetX = petAnchorRight ? PET_STAGE_WIDTH - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
+    const insetY = petAnchorBottom ? PET_STAGE_HEIGHT - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
     const x = clampToStage(
-        point.x - petDragOffset.x - PET_STAGE_MARGIN,
+        point.x - petDragOffset.x - insetX,
         displayArea.x,
         displayArea.width,
-        compact
+        PET_STAGE_WIDTH
     );
     const y = clampToStage(
-        point.y - petDragOffset.y - PET_STAGE_MARGIN,
+        point.y - petDragOffset.y - insetY,
         displayArea.y,
         displayArea.height,
-        compact
+        PET_STAGE_HEIGHT
     );
     // 用缓存坐标去重，避免每帧同步 getBounds 增加主进程开销。
-    if (petWindowX !== x || petWindowY !== y) {
-        petWindowX = x;
-        petWindowY = y;
-        petWin.setPosition(x, y);
+    // 高缩放下再把坐标对齐到物理像素，否则每帧落在半像素上会被 DWM 重采样。
+    const scale = Number(current.scaleFactor) || 1;
+    const nextX = alignDip(x, scale);
+    const nextY = alignDip(y, scale);
+    if (petWindowX !== nextX || petWindowY !== nextY) {
+        petWindowX = nextX;
+        petWindowY = nextY;
+        petWin.setPosition(nextX, nextY);
     }
+}
+
+// 拖动开始：不再收缩窗口，只把舞台移到光标下方。透明窗口 resize 会重新
+// 合成整个位图，高 DPI 下表现为拖动开始/结束闪一下，所以全程保持原尺寸。
+function startPetWindowDrag(payload) {
+    if (!petWin || petWin.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const size = Math.max(40, Math.min(180, Number(payload?.petSize) || 76));
+    const offsetX = Number(payload?.offsetX);
+    const offsetY = Number(payload?.offsetY);
+    petDragOffset = {
+        x: Number.isFinite(offsetX) ? Math.max(0, Math.min(size - 1, offsetX)) : size / 2,
+        y: Number.isFinite(offsetY) ? Math.max(0, Math.min(size - 1, offsetY)) : size / 2,
+        size
+    };
+    const display = screen.getDisplayNearestPoint(cursor);
+    petDragDisplay = display;
+    petDisplayId = display.id;
+    const area = display.workArea;
+    const insetX = petAnchorRight ? PET_STAGE_WIDTH - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
+    const insetY = petAnchorBottom ? PET_STAGE_HEIGHT - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
+    const startX = alignDip(
+        clampToStage(cursor.x - petDragOffset.x - insetX, area.x, area.width, PET_STAGE_WIDTH),
+        display.scaleFactor
+    );
+    const startY = alignDip(
+        clampToStage(cursor.y - petDragOffset.y - insetY, area.y, area.height, PET_STAGE_HEIGHT),
+        display.scaleFactor
+    );
+    petWindowX = startX;
+    petWindowY = startY;
+    petWin.setPosition(startX, startY);
 }
 
 function getPetWindowDragFinishLayout() {
     if (!petWin || petWin.isDestroyed() || !petDragOffset) return null;
     const size = petDragOffset.size;
     const bounds = petWin.getBounds();
-    // 拖动期间桌宠固定在紧凑舞台的左上留白处。
-    const petLeft = bounds.x + PET_STAGE_MARGIN;
-    const petTop = bounds.y + PET_STAGE_MARGIN;
+    // 拖动期间窗口尺寸未变，桌宠固定在当前锚点角落
+    const insetX = petAnchorRight ? PET_STAGE_WIDTH - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
+    const insetY = petAnchorBottom ? PET_STAGE_HEIGHT - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
+    const petLeft = bounds.x + insetX;
+    const petTop = bounds.y + insetY;
     const display = screen.getDisplayNearestPoint({
         x: petLeft + size / 2,
         y: petTop + size / 2
@@ -793,8 +923,8 @@ function getPetWindowDragFinishLayout() {
     const bottom = petTop + size / 2 > area.y + area.height / 2;
     const localX = right ? PET_STAGE_WIDTH - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
     const localY = bottom ? PET_STAGE_HEIGHT - size - PET_STAGE_MARGIN : PET_STAGE_MARGIN;
-    const x = clampToStage(petLeft - localX, area.x, area.width, PET_STAGE_WIDTH);
-    const y = clampToStage(petTop - localY, area.y, area.height, PET_STAGE_HEIGHT);
+    const x = alignDip(clampToStage(petLeft - localX, area.x, area.width, PET_STAGE_WIDTH), display.scaleFactor);
+    const y = alignDip(clampToStage(petTop - localY, area.y, area.height, PET_STAGE_HEIGHT), display.scaleFactor);
     petAnchorRight = right;
     petAnchorBottom = bottom;
     petDisplayId = display.id;
@@ -829,6 +959,8 @@ function finishPetWindowDrag() {
 function stopPetWindowDrag() {
     petDragOffset = null;
     petDragDisplay = null;
+    // 拖动结束由 finishPetWindowDrag 收口时，页面不会再单独发 desktop-drag-active(false)
+    petDragActive = false;
     saveDisplayState();
     updateTrayMenu();
 }
@@ -865,6 +997,13 @@ function openLoginWindow() {
     });
     loginWin.setMenuBarVisibility(false);
     void loginWin.loadURL(loginUrl);
+    // 登录窗口失焦后同样恢复桌宠，理由同待办窗口
+    loginWin.on("blur", () => {
+        setTimeout(() => {
+            if (!loginWin || loginWin.isDestroyed() || loginWin.isFocused()) return;
+            if (overlaySuspended) restorePetOverlay();
+        }, 80);
+    });
     loginWin.on("closed", () => {
         loginWin = null;
         restorePetOverlay();
@@ -908,12 +1047,38 @@ function openTodoWindow(add = false) {
         }
     });
     todoWin.setMenuBarVisibility(false);
+    // 诊断开关：记录待办窗口的尺寸/位置变化，用来定位拖动时尺寸来回跳的问题
+    if (process.env.PET_DEBUG === "1") {
+        const logTodoBounds = (tag) => {
+            if (!todoWin || todoWin.isDestroyed()) return;
+            const b = todoWin.getBounds();
+            const max = todoWin.isMaximized() ? " maximized" : "";
+            debugLog("todo", `${tag} ${b.x},${b.y} ${b.width}x${b.height}${max}`);
+        };
+        todoWin.on("resize", () => logTodoBounds("resize"));
+        todoWin.on("will-resize", () => logTodoBounds("will-resize"));
+        todoWin.on("move", () => logTodoBounds("move"));
+        todoWin.on("will-move", () => logTodoBounds("will-move"));
+        todoWin.on("maximize", () => logTodoBounds("maximize"));
+        todoWin.on("unmaximize", () => logTodoBounds("unmaximize"));
+        todoWin.on("enter-full-screen", () => logTodoBounds("enter-full-screen"));
+        todoWin.on("leave-full-screen", () => logTodoBounds("leave-full-screen"));
+    }
     todoWin.once("ready-to-show", () => {
         if (!todoWin || todoWin.isDestroyed()) return;
         todoWin.show();
         todoWin.focus();
     });
     void todoWin.loadURL(addUrl);
+    // 待办窗口失焦（用户切到浏览器/桌面等外部应用）时恢复桌宠，
+    // 否则桌宠会一直沉在待办窗口下面且不接收鼠标，点了也没反应。
+    // 窗口重新获得焦点时 browser-window-focus 会再次暂停。
+    todoWin.on("blur", () => {
+        setTimeout(() => {
+            if (!todoWin || todoWin.isDestroyed() || todoWin.isFocused()) return;
+            if (overlaySuspended) restorePetOverlay();
+        }, 80);
+    });
     todoWin.on("closed", () => {
         todoWin = null;
         restorePetOverlay();
@@ -927,6 +1092,8 @@ function openTodoAddWindow() {
 function registerIpc() {
     ipcMain.on("pet:interactive", (event, value) => {
         if (!petWin || event.sender !== petWin.webContents) return;
+        // 待办/登录窗口打开时桌宠已降层，不再切换鼠标状态
+        if (overlaySuspended) return;
         // 命中切换由主进程的 petHoverGuard 负责，避免页面 mousemove 与
         // 窗口移动互相触发造成指针闪烁或意外拖动。
         if (!petShapeSupported) return;
@@ -944,10 +1111,12 @@ function registerIpc() {
         const items = describeDisplays();
         return {
             currentId: petDisplayId,
-            displays: items.map(({ id, label, primary, display }) => ({
+            displays: items.map(({ id, label, primary, display, scaleFactor }) => ({
                 id,
                 label,
                 primary,
+                scaleFactor,
+                size: display.size,
                 workArea: display.workArea
             }))
         };
@@ -1009,32 +1178,7 @@ function registerIpc() {
 
     ipcMain.on("pet:window-drag-start", (event, payload) => {
         if (!petWin || event.sender !== petWin.webContents) return;
-        const cursor = screen.getCursorScreenPoint();
-        const size = Math.max(40, Math.min(180, Number(payload?.petSize) || 76));
-        const offsetX = Number(payload?.offsetX);
-        const offsetY = Number(payload?.offsetY);
-        petDragOffset = {
-            x: Number.isFinite(offsetX) ? Math.max(0, Math.min(size - 1, offsetX)) : size / 2,
-            y: Number.isFinite(offsetY) ? Math.max(0, Math.min(size - 1, offsetY)) : size / 2,
-            size
-        };
-        const display = screen.getDisplayNearestPoint(cursor);
-        petDragDisplay = display;
-        petDisplayId = display.id;
-        // 拖动时把 420×720 的透明舞台收缩到桌宠大小。透明窗口参与 DWM 合成，
-        // 每帧移动整块大窗口是之前掉帧的主要原因；窗口越小，移动越接近系统原生拖动。
-        const compactSize = getPetCompactSize(size);
-        const area = display.workArea;
-        const targetPetLeft = cursor.x - petDragOffset.x;
-        const targetPetTop = cursor.y - petDragOffset.y;
-        const startX = clampToStage(targetPetLeft - PET_STAGE_MARGIN, area.x, area.width, compactSize);
-        const startY = clampToStage(targetPetTop - PET_STAGE_MARGIN, area.y, area.height, compactSize);
-        petAnchorRight = true;
-        petAnchorBottom = true;
-        petWindowX = startX;
-        petWindowY = startY;
-        petWin.setBounds({ x: startX, y: startY, width: compactSize, height: compactSize });
-        sendPetAnchor(size);
+        startPetWindowDrag(payload);
     });
 
     ipcMain.on("pet:window-drag-tick", (event) => {
@@ -1136,13 +1280,25 @@ if (!hasLock) {
     });
 
     // 其他窗口获得焦点时也把桌宠重新提到最上层，但不抢焦点。
-    app.on("browser-window-focus", () => {
+    // 焦点在桌面版自己的待办/登录窗口时桌宠避让（不置顶、不接收鼠标），
+    // 避开拖动窗口时透明置顶层的反复合成；焦点回到其他窗口后恢复。
+    app.on("browser-window-focus", (_event, win) => {
+        if (win === todoWin || win === loginWin) {
+            if (!overlaySuspended) suspendPetOverlay();
+            return;
+        }
+        if (overlaySuspended) restorePetOverlay();
         if (petWin && !petWin.isDestroyed() && !petHidden) {
             setTimeout(keepPetOnTop, 50);
         }
     });
 
     app.whenReady().then(() => {
+        const primary = screen.getPrimaryDisplay();
+        debugLog(
+            "app",
+            `ready size=${primary.size.width}x${primary.size.height} scale=${primary.scaleFactor} workArea=${primary.workArea.width}x${primary.workArea.height}`
+        );
         registerIpc();
         createPetWindow();
         createTray();

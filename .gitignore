@@ -5,6 +5,12 @@ node_modules
 # 页面入口与共享资源纳入版本管理，dist 为历史构建产物不入库
 src/pages/dist/
 
+# 桌面版调试日志（PET_DEBUG=1 时生成）
+desktop/pet-debug.log
+
+# Rust 桌宠（实验项目，暂不入库）
+desktop-rs/
+
 # 运行时日志
 debug.log
 

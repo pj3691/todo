@@ -45,6 +45,22 @@
     cursor: grabbing;
 }
 
+/* 桌面版拖动：窗口每帧 setPosition 时把页面重绘压到最低。
+   浮动动画暂停，阴影滤镜去掉（软件合成下滤镜会逐帧重算），
+   left/top 提到独立合成层，避免整窗重绘在高 DPI 下引起闪烁。 */
+.pet-widget.is-dragging {
+    will-change: left, top;
+}
+
+.pet-widget.is-dragging .pet-float {
+    animation-play-state: paused;
+}
+
+.pet-widget.is-dragging .pet-svg,
+.pet-widget.is-dragging .pet-image {
+    filter: none;
+}
+
 .pet-flip,
 .pet-float,
 .pet-squish {

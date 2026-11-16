@@ -110,6 +110,8 @@
         requestSeq: 0,
         hoverBubble: false,
         stageAnchor: null,
+        // 松手后等待主进程展开舞台并回传锚点，期间暂停页面自行重排
+        awaitingStageLayout: false,
         drag: null,
         audioCtx: null
     };
@@ -588,12 +590,19 @@
         return Math.max(4, global.innerHeight - petSize() - 4);
     }
 
+    // 高 DPI 下把坐标对齐到物理像素：125% / 150% 缩放下 CSS 小数也会落在
+    // 半个物理像素上，浏览器合成时插值，表现为边缘发虚、拖动时闪。
+    function alignCssPixel(value) {
+        const dpr = Number(global.devicePixelRatio) || 1;
+        return Math.round(value * dpr) / dpr;
+    }
+
     function applyPosition(left, top, persist) {
         const size = petSize();
         const nextLeft = clamp(left, 4, maxLeft());
         const nextTop = clamp(top, 4, maxTop());
-        state.root.style.left = `${Math.round(nextLeft)}px`;
-        state.root.style.top = `${Math.round(nextTop)}px`;
+        state.root.style.left = `${alignCssPixel(nextLeft)}px`;
+        state.root.style.top = `${alignCssPixel(nextTop)}px`;
         state.root.style.right = "auto";
         state.root.style.bottom = "auto";
         // 默认造型朝右：位于右半屏时镜像，让它始终朝向页面中心
@@ -694,7 +703,10 @@
             windowDrag: Boolean(
                 state.config.desktopStage &&
                     global.desktopApi?.setDesktopDragging &&
-                    global.desktopApi?.getCursorPoint
+                    global.desktopApi?.getCursorPoint &&
+                    global.desktopApi?.startWindowDrag &&
+                    global.desktopApi?.windowDragTick &&
+                    global.desktopApi?.endWindowDrag
             ),
             windowStarted: false,
             startCursorX: Number.isFinite(cursor?.x) ? cursor.x : event.screenX,
@@ -748,15 +760,22 @@
             drag.lastScreenY = event.screenY;
             if (!drag.windowStarted) {
                 drag.windowStarted = true;
-                // 用主进程读到的真实光标位置驱动，避免窗口自身移动时
-                // pointer event 的 screenX 回跳造成桌宠抖动。
+                // 把光标在桌宠内的偏移交给主进程，由它逐帧 setPosition 移动窗口；
+                // 拖动全程不改窗口尺寸，页面内容也不重绘，避免透明窗 resize 闪烁。
+                console.debug("[pet] drag-start", global.innerWidth, global.innerHeight, petSize(), drag.offsetX, drag.offsetY);
+                global.desktopApi.startWindowDrag?.(petSize(), drag.offsetX, drag.offsetY);
                 const step = () => {
                     if (state.drag !== drag) return;
-                    applyDesktopDrag(drag);
+                    global.desktopApi.windowDragTick?.();
                     drag.frame = global.requestAnimationFrame(step);
                 };
                 drag.frame = global.requestAnimationFrame(step);
             }
+            return;
+        }
+        // 桌面舞台的旧兜底路径：直接移动窗口并同步页面内位置
+        if (state.config.desktopStage && global.desktopApi?.getCursorPoint) {
+            applyDesktopDrag(drag);
             return;
         }
         applyPosition(drag.left + dx, drag.top + dy, false);
@@ -818,8 +837,8 @@
         const actualWindowY = Number.isFinite(global.screenY) ? global.screenY : nextWindowY;
         localX = targetPetLeft - actualWindowX;
         localY = targetPetTop - actualWindowY;
-        state.root.style.left = `${Math.round(localX)}px`;
-        state.root.style.top = `${Math.round(localY)}px`;
+        state.root.style.left = `${alignCssPixel(localX)}px`;
+        state.root.style.top = `${alignCssPixel(localY)}px`;
         state.root.style.right = "auto";
         state.root.style.bottom = "auto";
         const isRight = targetPetLeft + size / 2 > area.x + area.width / 2;
@@ -841,11 +860,22 @@
         global.removeEventListener("pointercancel", onPointerUp);
 
         if (drag.windowDrag) {
-            global.desktopApi.setDesktopDragging?.(false);
             if (!drag.moved) {
+                global.desktopApi.setDesktopDragging?.(false);
                 toggleMini();
                 return;
             }
+            // 主进程按松手位置把舞台展开回完整尺寸并回传锚点，
+            // 内部会清掉拖动状态并保存位置。
+            state.awaitingStageLayout = true;
+            console.debug("[pet] drag-end", global.innerWidth, global.innerHeight);
+            global.desktopApi.endWindowDrag?.();
+            // 兜底：主进程没有可用的布局信息时，自己按锚点归位
+            global.setTimeout(() => {
+                if (!state.awaitingStageLayout) return;
+                state.awaitingStageLayout = false;
+                applyStageAnchor(state.stageAnchor || { right: true, bottom: true });
+            }, 400);
             if (state.queue.length > 0) {
                 window.setTimeout(showNextReminder, 300);
             }
@@ -2460,10 +2490,16 @@
     }
 
     function onResize() {
-        // 拖动时主进程会把舞台缩到桌宠大小，窗口尺寸变化后必须按当前锚点重摆；
-        // 只看 rect.left/top 会把桌宠夹到紧凑窗口的错误角落。
+        console.debug("[pet] resize", global.innerWidth, global.innerHeight, state.awaitingStageLayout, Boolean(state.drag));
+        // 松手后等主进程展开舞台并回传锚点，期间不要擅自重排
+        if (state.awaitingStageLayout) return;
         if (state.config.desktopStage && state.stageAnchor) {
+            // 拖动开始/结束都会改变舞台尺寸，必须按锚点重摆，
+            // 否则桌宠会停在旧视口算出的位置，甚至跑到紧凑窗口外面。
             applyStageAnchor(state.stageAnchor);
+        } else if (state.drag) {
+            // 首次拖动还没有锚点，等主进程的 anchor 事件统一归位
+            return;
         } else {
             const rect = state.root.getBoundingClientRect();
             applyPosition(rect.left, rect.top, false);
@@ -2592,19 +2628,33 @@
         if (!state.config.desktopStage || !state.root) return;
         const size = petSize();
         const margin = state.config.margin;
-        applyPosition(
-            anchor?.right === false ? margin : global.innerWidth - size - margin,
-            anchor?.bottom === false ? margin : global.innerHeight - size - margin,
-            false
-        );
+        const place = () => {
+            if (!state.root) return;
+            applyPosition(
+                anchor?.right === false ? margin : global.innerWidth - size - margin,
+                anchor?.bottom === false ? margin : global.innerHeight - size - margin,
+                false
+            );
+        };
+        place();
+        // 舞台刚被主进程收缩/展开时 innerWidth 可能还差一帧才更新，
+        // 下一帧按新尺寸再校正一次，避免桌宠先落在旧角落再跳回来。
+        global.requestAnimationFrame(place);
     }
 
     function setStageAnchor(anchor) {
         if (!state.config.desktopStage || !state.root) return;
+        console.debug("[pet] anchor", global.innerWidth, global.innerHeight, JSON.stringify(anchor));
         state.stageAnchor = {
             right: anchor?.right !== false,
             bottom: anchor?.bottom !== false
         };
+        state.awaitingStageLayout = false;
+        // 拖动刚开始时主进程刚把舞台收缩，先等一帧让窗口尺寸生效再定位
+        if (state.drag?.windowStarted) {
+            global.requestAnimationFrame(() => applyStageAnchor(state.stageAnchor));
+            return;
+        }
         applyStageAnchor(state.stageAnchor);
     }
 

@@ -195,11 +195,19 @@ const port = 30012;
 const apiPrefix = "/gitstatus/api";
 const pagesDir = path.resolve("./src/pages");
 const docsDir = path.resolve("./src/docs");
-const dbPath = path.resolve("./src/output/gitstatus.db");
-const db = new Database(dbPath);
+const outputDir = path.resolve("./src/output");
+const dbPath = path.resolve(outputDir, "gitstatus.db");
 const configPath = path.resolve("./config/config.json");
-const logsDir = path.resolve("./src/output/logs");
-const modelsDir = path.resolve("./src/output/models");
+const logsDir = path.resolve(outputDir, "logs");
+const modelsDir = path.resolve(outputDir, "models");
+
+// better-sqlite3 不会自动创建父目录，src/output 被 .gitignore 忽略，
+// 首次运行或目录被清理时需先创建，否则 new Database 会抛错
+if (!fs.existsSync(outputDir)) {
+  fs.mkdirSync(outputDir, { recursive: true });
+}
+
+const db = new Database(dbPath);
 
 // ========== 日志模块 ==========
 // 按日期写入 output/logs/YYYY-MM-DD.log，同时输出到控制台
@@ -348,6 +356,12 @@ app.use((req, res, next) => {
   }
 
   next();
+});
+
+// 根路径与 /gitstatus 直接跳转到页面入口，
+// 否则访问 http://host:port/ 会落到 Express 默认 404（页面实际托管在 /pages 下）
+app.get(["/", "/gitstatus"], (_req, res) => {
+  res.redirect("/pages/index.html");
 });
 
 app.use(
