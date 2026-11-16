@@ -64,8 +64,6 @@
 
 ![桌面版设置面板](docs/screenshots/桌宠-桌面版-设置.png)
 
-> 还有三张截图待补：`docs/screenshots/数据共享.png`、`docs/screenshots/账号管理.png`、`docs/screenshots/登录.png`。对应页面的字段、按钮与限制说明已经写在 [docs/页面说明/](docs/README.md) 里，补图后无需再改链接。
-
 ---
 
 ## 二、环境要求
