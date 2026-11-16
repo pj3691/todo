@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitStatus 桌宠</title>
+    <link rel="stylesheet" href="pet.css">
+</head>
+<body>
+    <div id="pet" class="pet" role="button" tabindex="0" aria-label="桌宠喵：点击查看今天的待办">
+        <span class="pet-badge" aria-hidden="true"></span>
+        <span class="pet-zzz" aria-hidden="true">z</span>
+        <span class="pet-visual">
+            <span class="pet-flip">
+                <span class="pet-float">
+                    <span class="pet-squish"></span>
+                </span>
+            </span>
+        </span>
+        <button class="pet-side-btn pet-menu-btn" type="button" title="打开桌宠面板" aria-label="打开桌宠面板">
+            <span class="pet-menu-line"></span>
+            <span class="pet-menu-line"></span>
+            <span class="pet-menu-line"></span>
+        </button>
+        <button class="pet-side-btn pet-add-btn" type="button" title="新建待办" aria-label="去待办页新建待办">+</button>
+        <button class="pet-side-btn pet-todo-btn" type="button" title="打开待办页面" aria-label="打开待办页面">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 6h11M9 12h11M9 18h11"></path>
+                <path d="M3.5 6l1.2 1.2L7 4.8M3.5 12l1.2 1.2L7 10.8M3.5 18l1.2 1.2L7 16.8"></path>
+            </svg>
+        </button>
+        <span class="pet-debug-label" aria-hidden="true"></span>
+    </div>
+    <script src="pet-visual.js"></script>
+    <script src="pet.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitStatus 桌宠气泡</title>
+    <link rel="stylesheet" href="bubble.css">
+</head>
+<body>
+    <div id="bubble" class="bubble is-mini is-above align-right" role="dialog" aria-label="桌宠提示">
+        <div class="bubble-card">
+            <svg class="mini-bg" viewBox="0 0 300 300" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                <ellipse class="mini-shape" cx="150" cy="150" rx="145" ry="145" vector-effect="non-scaling-stroke"></ellipse>
+                <ellipse class="mini-dot" cx="248" cy="282" rx="14" ry="11" vector-effect="non-scaling-stroke"></ellipse>
+                <ellipse class="mini-dot is-small" cx="264" cy="314" rx="8" ry="6" vector-effect="non-scaling-stroke"></ellipse>
+            </svg>
+            <div id="content" class="bubble-content"></div>
+        </div>
+    </div>
+    <script src="bubble.js"></script>
+</body>
+</html>

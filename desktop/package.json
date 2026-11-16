@@ -20,6 +20,8 @@
     "files": [
       "main.js",
       "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
       "offline.html",
       "config.json",
       "tray.png"

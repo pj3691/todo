@@ -1,0 +1,477 @@
+/* ============================================================
+   气泡窗口
+   - 完整面板沿用网页版：322px 白底圆角卡片，贴在桌宠上方/下方
+   - 小气泡沿用网页版：200px SVG 椭圆 + 尾巴
+   - body 留 16px 透明内边距给阴影和尾巴（与 main.js 的 BUBBLE_PADDING 一致）
+   ============================================================ */
+:root {
+    color-scheme: light;
+    font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    background: transparent !important;
+}
+
+body {
+    padding: 16px;
+    box-sizing: border-box;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.bubble {
+    position: relative;
+    width: 322px;
+    box-sizing: border-box;
+}
+
+.bubble.is-mini,
+.bubble.is-notice {
+    width: 200px;
+}
+
+/* ---------- 卡片 ---------- */
+.bubble-card {
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+    padding: 13px 15px 12px;
+    border: 1px solid #e1e9e2;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 16px 40px rgba(24, 39, 29, 0.18);
+    color: #17231b;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 1;
+    transform: none;
+    transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* 小气泡：背景完全交给 SVG 椭圆，卡片只承担排版 */
+.bubble.is-mini .bubble-card,
+.bubble.is-notice .bubble-card {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: center;
+}
+
+.bubble-content {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.bubble-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.bubble-content::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(31, 122, 77, 0.24);
+}
+
+.bubble-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ---------- 小气泡 SVG 椭圆（与网页版一致） ---------- */
+.mini-bg {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    filter: drop-shadow(0 10px 18px rgba(12, 42, 27, 0.18));
+}
+
+.bubble.is-mini .mini-bg,
+.bubble.is-notice .mini-bg {
+    display: block;
+}
+
+.mini-shape,
+.mini-dot {
+    fill: #fff;
+    stroke: #1f5b3f;
+    stroke-width: 3;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.bubble.is-mini .bubble-content,
+.bubble.is-notice .bubble-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 14px 24px 20px;
+    overflow: visible;
+}
+
+/* 尾巴/椭圆按锚点方向翻转，和旧版行为一致 */
+.bubble.is-mini.align-left .mini-bg,
+.bubble.is-notice.align-left .mini-bg {
+    transform: scaleX(-1);
+}
+
+.bubble.is-mini.is-below .mini-bg,
+.bubble.is-notice.is-below .mini-bg {
+    transform: scaleY(-1);
+}
+
+.bubble.is-mini.is-below.align-left .mini-bg,
+.bubble.is-notice.is-below.align-left .mini-bg {
+    transform: scale(-1, -1);
+}
+
+/* ---------- 头部 ---------- */
+.bubble-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.bubble-kicker {
+    display: block;
+    color: #145d3a;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.bubble-title {
+    margin-top: 2px;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    word-break: break-word;
+}
+
+.head-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.link-btn {
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #6c7d71;
+    font: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.link-btn:hover {
+    background: #eef3ef;
+    color: #145d3a;
+}
+
+.close-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #6c7d71;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.close-btn:hover {
+    background: #eef3ef;
+    color: #3f5145;
+}
+
+.hint {
+    margin: 8px 0 0;
+    color: #6c7d71;
+    font-size: 12px;
+}
+
+/* ---------- 摘要面板 ---------- */
+.stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 4px 9px;
+    border: 1px solid #e1e9e2;
+    border-radius: 999px;
+    background: #f8faf8;
+    color: #6c7d71;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.stat strong {
+    color: #17231b;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.stat.is-danger {
+    border-color: #f3d3cf;
+    background: #fff0ee;
+    color: #c9372c;
+}
+
+.stat.is-danger strong {
+    color: #c9372c;
+}
+
+.list {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.list-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: #3f5145;
+}
+
+.list-item::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #1f7a4d;
+}
+
+.list-item.is-overdue::before {
+    background: #c9372c;
+}
+
+.list-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.list-time {
+    flex: 0 0 auto;
+    color: #6c7d71;
+    font-size: 10.9px;
+}
+
+.next {
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px dashed #e1e9e2;
+    color: #6c7d71;
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.next strong {
+    color: #3f5145;
+    font-weight: 700;
+}
+
+/* ---------- 操作按钮 ---------- */
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 5px 12px;
+    border: 1px solid #cfdbd1;
+    border-radius: 9px;
+    background: #fff;
+    color: #3f5145;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.btn:hover {
+    border-color: #b9cdc0;
+    background: #f8faf8;
+}
+
+.btn-primary {
+    border-color: #1f7a4d;
+    background: linear-gradient(180deg, #238c59, #145d3a);
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(31, 122, 77, 0.22);
+}
+
+.btn-primary:hover {
+    border-color: #145d3a;
+    background: linear-gradient(180deg, #27995f, #145d3a);
+    color: #fff;
+}
+
+.btn-muted {
+    border-color: transparent;
+    background: transparent;
+    color: #6c7d71;
+    font-weight: 600;
+}
+
+.btn-muted:hover {
+    background: #eef3ef;
+}
+
+.actions .btn-muted:first-child {
+    margin-right: auto;
+}
+
+/* ---------- 小气泡文字 ---------- */
+.mini-kicker {
+    color: #6c7d71;
+    font-size: 9.6px;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+}
+
+.mini-main {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.mini-main strong {
+    color: #145d3a;
+    font-size: 21.5px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+}
+
+.mini-main span {
+    color: #3f5145;
+    font-size: 11.8px;
+    font-weight: 600;
+}
+
+.mini-text {
+    color: #17231b;
+    font-size: 12.8px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.mini-title {
+    display: block;
+    margin-top: 1px;
+    color: #17231b;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+}
+
+.mini-sub {
+    display: block;
+    margin-top: 1px;
+    color: #6c7d71;
+    font-size: 10.9px;
+    line-height: 1.5;
+}
+
+.mini-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 3px;
+}
+
+.mini-chip {
+    align-self: center;
+    max-width: 100%;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e8f5ed;
+    color: #145d3a;
+    font-size: 9.9px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mini-chip.is-danger {
+    background: #fff0ee;
+    color: #c9372c;
+}
+
+.mini-chip.is-done {
+    background: #eef3ef;
+    color: #6c7d71;
+}
+
+/* ---------- 离线页 ---------- */
+.offline-code {
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: #eef5f0;
+    color: #1d4f35;
+    font-family: Consolas, "Cascadia Code", monospace;
+    font-size: 11px;
+    word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn {
+        transition: none;
+    }
+}

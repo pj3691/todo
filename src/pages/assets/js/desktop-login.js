@@ -26,7 +26,9 @@
         if (finished) return;
         finished = true;
         if (global.desktopApi?.loginDone) {
-            global.desktopApi.loginDone();
+            // Electron 主进程需要拿到 token 才能代渲染进程请求接口
+            const token = global.GitStatusAuth?.readToken?.() || "";
+            global.desktopApi.loginDone(token);
             return;
         }
         // 在普通浏览器里打开时退回网页端
