@@ -68,7 +68,10 @@
     }
 
     function closeBubbleButton() {
-        return actionButton("\u00d7", "close-btn", "close", { ariaLabel: "关闭" });
+        return actionButton("\u00d7", "close-btn", "close", {
+            title: "关闭面板",
+            ariaLabel: "关闭面板"
+        });
     }
 
     function head(kicker, title, actions) {
@@ -151,7 +154,7 @@
             head(
                 "今天 · " + String(summary.today || "").slice(5),
                 pending > 0 ? `老大还有 ${pending} 件事没做完喵～` : "今天的待办都完成啦喵，老大真棒！",
-                [settingsButton(), closeToTrayButton()]
+                [settingsButton(), closeBubbleButton()]
             )
         );
 
