@@ -27,12 +27,14 @@ body {
 /* 必须与 main.js 的 PET_PADDING 保持一致 */
 .pet {
     --pet-size: 76px;
+    /* 窗口四周的透明内边距，必须与 main.js 的 PET_PADDING 保持一致 */
+    --pet-pad: 10px;
     /* 侧边按钮尺寸与贴边间距：镜像时按这两个值反射到左侧 */
     --side-btn-size: 25px;
     --side-btn-gap: 3px;
     position: absolute;
     inset: 0;
-    padding: 10px;
+    padding: var(--pet-pad);
     box-sizing: border-box;
     cursor: grab;
     touch-action: none;
@@ -127,7 +129,8 @@ body {
 .pet-badge {
     position: absolute;
     top: 3px;
-    left: 3px;
+    /* 对齐角色方块而不是窗口边缘：贴边时窗口会探出屏幕，挂在内边距里会被裁掉 */
+    left: var(--pet-pad);
     z-index: 4;
     min-width: 19px;
     height: 19px;
@@ -222,7 +225,7 @@ body {
 /* 徽标和打盹的 z 同步反射，避免被左侧按钮盖住 */
 .pet.is-flipped .pet-badge {
     left: auto;
-    right: var(--side-btn-gap, 3px);
+    right: var(--pet-pad);
 }
 
 .pet.is-flipped .pet-zzz {

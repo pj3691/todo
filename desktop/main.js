@@ -313,16 +313,24 @@ function petWindowSize() {
 
 /**
  * 桌宠贴边约束。
- * 以“可视方块”（size × size，不含窗口四周的透明内边距）为基准，窗口可以探出工作区一个内边距。
- * 右侧例外：侧边三连按钮是相对窗口右边定位的（right: 3px），窗口探出会把按钮裁掉，
- * 因此右边界多留一个内边距，让窗口整体留在工作区内。
+ * 以“可视方块”（size × size，不含窗口四周的透明内边距）为基准。
+ * 侧边三连按钮压在角色边缘之外 7px，所以按钮所在那一侧必须给窗口留出内边距，
+ * 否则按钮会被屏幕边缘裁掉；镜像后按钮换到左边，边距也跟着换边。
  */
 function clampPetOrigin(x, y, area) {
     const size = prefs.size;
-    const minX = area.x - PET_PADDING;
-    const maxX = area.x + area.width - size - PET_PADDING * 2;
+    const buttonsOnLeft = shouldFlip();
+    const minX = buttonsOnLeft ? area.x : area.x - PET_PADDING;
+    const maxX = buttonsOnLeft
+        ? area.x + area.width - PET_PADDING - size
+        : area.x + area.width - size - PET_PADDING * 2;
     const minY = area.y - PET_PADDING;
-    const maxY = area.y + area.height - PET_PADDING - size;
+    // 三连按钮最下沿相对桌宠顶部是 PET_SIDE_STACK_HEIGHT，小尺寸时比角色本身还高，
+    // 下边界要保证它不被任务栏/屏幕下沿裁掉。
+    const maxY = Math.min(
+        area.y + area.height - PET_PADDING - size,
+        area.y + area.height - PET_SIDE_STACK_HEIGHT - PET_PADDING
+    );
     return {
         x: clamp(x, Math.min(minX, maxX), Math.max(minX, maxX)),
         y: clamp(y, Math.min(minY, maxY), Math.max(minY, maxY))
