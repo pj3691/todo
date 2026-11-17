@@ -30,6 +30,9 @@
         petImageAlt: "桌宠",
         // 素材大小保存在本机浏览器；角色图片由后端按账号保存
         petSizeKey: "gitstatus_pet_size_v1",
+        // 手动镜像：角色基础朝向始终翻转
+        petMirroredKey: "gitstatus_pet_mirrored_v1",
+        // 贴边镜像：贴右侧时自动转身
         petMirrorKey: "gitstatus_pet_mirror_v1",
         petSize: 76,
         petSizeMin: 56,
@@ -91,6 +94,7 @@
         remotePetImageUrl: "",
         assetThumb: null,
         petSize: 76,
+        petMirrored: false,
         petMirror: false,
         lastSync: "",
         summary: null,
@@ -245,6 +249,7 @@
             state.config.petSizeMax
         );
         // 默认不镜像，导入的素材保持原本朝向
+        state.petMirrored = readStorage(state.config.petMirroredKey) === "1";
         state.petMirror = readStorage(state.config.petMirrorKey) === "1";
     }
 
@@ -608,9 +613,11 @@
         // 默认造型朝右：位于右半屏时镜像，让它始终朝向页面中心
         const centerX = nextLeft + size / 2;
         const isRight = centerX > global.innerWidth / 2;
-        // is-right 只用于小气泡的左右对齐；是否镜像由用户设置决定
-        state.root.classList.toggle("is-right", isRight);
-        state.root.classList.toggle("is-flipped", state.petMirror && isRight);
+        // 是否镜像由用户设置决定：手动镜像决定基础朝向，贴边镜像在此基础上再翻一次
+        const flipped = (state.petMirror && isRight) !== state.petMirrored;
+        state.root.classList.toggle("is-flipped", flipped);
+        // 小气泡与快捷按钮跟随当前朝向：镜像后沿中线反射到另一侧
+        state.root.classList.toggle("is-right", isRight !== flipped);
         if (state.bubbleOpen) placeBubble();
         if (persist) {
             writeStorage(
@@ -842,8 +849,9 @@
         state.root.style.right = "auto";
         state.root.style.bottom = "auto";
         const isRight = targetPetLeft + size / 2 > area.x + area.width / 2;
-        state.root.classList.toggle("is-right", isRight);
-        state.root.classList.toggle("is-flipped", state.petMirror && isRight);
+        const flipped = (state.petMirror && isRight) !== state.petMirrored;
+        state.root.classList.toggle("is-flipped", flipped);
+        state.root.classList.toggle("is-right", isRight !== flipped);
     }
 
     function onPointerUp(event) {
@@ -1226,9 +1234,21 @@
     function positionMini() {
         if (!state.miniOpen || !state.mini) return;
         const mini = state.mini;
+        const root = state.root;
         mini.style.transform = "";
         mini.classList.remove("is-below");
+
+        // 先按当前朝向展开；这一侧放不下时换到另一侧，两侧都放不下再左右夹紧
+        const overflows = (box) => box.left < 8 || box.right > global.innerWidth - 8;
         let rect = mini.getBoundingClientRect();
+        if (overflows(rect)) {
+            root.classList.toggle("is-right");
+            if (overflows(mini.getBoundingClientRect())) {
+                // 两侧都放不下（窄屏），退回镜像方向后交给位移夹紧
+                root.classList.toggle("is-right");
+            }
+            rect = mini.getBoundingClientRect();
+        }
         if (rect.top < 8) {
             mini.classList.add("is-below");
             rect = mini.getBoundingClientRect();
@@ -1766,6 +1786,18 @@
         });
         sizeRow.append(sizeInput, sizeText);
 
+        const mirroredCheck = el("label", "pet-set-check");
+        const mirroredInput = document.createElement("input");
+        mirroredInput.type = "checkbox";
+        mirroredInput.checked = state.petMirrored;
+        mirroredInput.addEventListener("change", () => {
+            state.petMirrored = mirroredInput.checked;
+            writeStorage(state.config.petMirroredKey, state.petMirrored ? "1" : "0");
+            const rect = state.root.getBoundingClientRect();
+            applyPosition(rect.left, rect.top, false);
+        });
+        mirroredCheck.append(mirroredInput, el("span", "", "镜像角色（默认关闭）"));
+
         const mirrorCheck = el("label", "pet-set-check");
         const mirrorInput = document.createElement("input");
         mirrorInput.type = "checkbox";
@@ -1788,7 +1820,7 @@
         });
         soundCheck.append(soundInput, el("span", "", "提醒音"));
 
-        assetSection.append(assetRow, sizeRow, mirrorCheck, soundCheck, assetStatus);
+        assetSection.append(assetRow, sizeRow, mirroredCheck, mirrorCheck, soundCheck, assetStatus);
         assetSection.append(
             el(
                 "p",

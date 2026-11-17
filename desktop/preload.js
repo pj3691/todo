@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld("desktopApi", {
     quitApp: () => ipcRenderer.send("app:quit"),
     openExternal: (url) => ipcRenderer.send("app:open-external", String(url || "")),
     retry: () => ipcRenderer.send("app:retry"),
+    // 后台未运行时一键拉起本地后端
+    startBackend: () => ipcRenderer.invoke("app:start-backend"),
     loginDone: (token) => ipcRenderer.send("app:login-done", token === undefined ? "" : String(token || "")),
 
     // 设置窗口

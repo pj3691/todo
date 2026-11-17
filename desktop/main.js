@@ -6,6 +6,7 @@
    - 数据轮询、提醒调度、角色素材都集中在主进程，窗口只做展示
    ============================================================ */
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, shell, dialog, Notification } = require("electron");
+const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { readJson, writeJson } = require("./lib/store");
@@ -58,6 +59,125 @@ function readServerUrl() {
 }
 
 const serverUrl = readServerUrl();
+
+// 后台服务启动配置：桌面端发现后台没运行时可以一键拉起它
+function readBackendLaunch() {
+    const result = {
+        // 打包后 __dirname 在 app.asar 里，“..”不再是仓库根目录，必须靠配置指定
+        cwd: app.isPackaged ? "" : path.join(__dirname, ".."),
+        command: "npm run dev"
+    };
+    try {
+        const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+        if (config && typeof config.backendCwd === "string" && config.backendCwd.trim()) {
+            result.cwd = path.resolve(__dirname, config.backendCwd.trim());
+        }
+        if (config && typeof config.backendCommand === "string" && config.backendCommand.trim()) {
+            result.command = config.backendCommand.trim();
+        }
+    } catch {
+        /* 没有配置文件时使用默认值 */
+    }
+    return result;
+}
+
+const backendLaunch = readBackendLaunch();
+
+/** 后台监听的端口（从 serverUrl 取，用于判断运行状态与终止进程） */
+const backendPort = (() => {
+    try {
+        return Number(new URL(serverUrl).port) || 80;
+    } catch {
+        return 0;
+    }
+})();
+
+/** 只有指向本机的 serverUrl 才允许启动/停止后台；远程后端不归桌面端管 */
+function isLocalServer() {
+    try {
+        const host = new URL(serverUrl).hostname.replace(/^\[|\]$/g, "");
+        return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    } catch {
+        return false;
+    }
+}
+
+function appendBackendLog(text) {
+    try {
+        fs.appendFileSync(backendLogPath, text);
+    } catch {
+        /* 日志写失败不影响启动 */
+    }
+}
+
+/** 超过 4MB 就轮转一次，避免日志无限增长 */
+function rotateBackendLog() {
+    try {
+        if (fs.statSync(backendLogPath).size > 4 * 1024 * 1024) {
+            fs.renameSync(backendLogPath, `${backendLogPath}.1`);
+        }
+    } catch {
+        /* 文件不存在或改名失败时忽略 */
+    }
+}
+
+/**
+ * 静默拉起后台：不开控制台窗口，独立于桌面端存活。
+ * 写法与 src/projects.ts 里启动项目的 spawn 一致：shell + windowsHide，Windows 上不加 detached。
+ * 不接管道：业务日志由后端自己写到仓库的 src/output/logs/日期.log，
+ * 这里只把“谁在什么时候启动的”记到 userData/backend.log。
+ */
+function launchBackendProcess() {
+    rotateBackendLog();
+    appendBackendLog(
+        `\n===== ${new Date().toISOString()} launch: ${backendLaunch.command} (cwd=${backendLaunch.cwd}) =====\n`
+    );
+    const child = spawn(backendLaunch.command, {
+        cwd: backendLaunch.cwd,
+        shell: true,
+        windowsHide: true,
+        // Windows 上不能加 detached：它会带上 DETACHED_PROCESS，
+        // 而该标志与 CREATE_NO_WINDOW（windowsHide）互斥，后者会被忽略，控制台窗口就会冒出来。
+        // 与项目管理里启动项目的写法保持一致。
+        detached: process.platform !== "win32",
+        stdio: "ignore"
+    });
+    child.on("error", (error) => appendBackendLog(`spawn error: ${error.message}\n`));
+    child.unref();
+    return child;
+}
+
+/**
+ * 终止后台进程树。
+ * 除了占用端口的进程，还要杀掉本仓库的 nodemon，否则它会把子进程重新拉起来。
+ */
+function killBackendProcessTree() {
+    if (process.platform !== "win32") {
+        if (backendChildPid) {
+            try {
+                process.kill(-backendChildPid, "SIGKILL");
+            } catch {
+                /* 进程已退出时忽略 */
+            }
+        }
+        return;
+    }
+    const marker = backendLaunch.cwd.replace(/'/g, "''");
+    const script = [
+        "$targets = New-Object System.Collections.Generic.HashSet[int]",
+        `Get-NetTCPConnection -LocalPort ${backendPort} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { [void]$targets.Add([int]$_.OwningProcess) }`,
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${marker}') -and $_.CommandLine -match 'nodemon' } | ForEach-Object { [void]$targets.Add([int]$_.ProcessId) }`,
+        "foreach ($procId in $targets) { taskkill /PID $procId /T /F | Out-Null }"
+    ].join("; ");
+    try {
+        execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+            windowsHide: true,
+            timeout: 15000
+        });
+    } catch {
+        /* 没有可杀进程或权限不足时忽略 */
+    }
+}
 const loginUrl = `${serverUrl}/pages/desktop-login.html`;
 const todoUrl = `${serverUrl}/pages/todo.html`;
 
@@ -69,6 +189,10 @@ const files = {
     reminder: path.join(userDataDir, "reminder-state.json")
 };
 const debugLogPath = path.join(__dirname, "pet-debug.log");
+// 后台进程的 stdout/stderr（nodemon 横幅、启动报错等）；业务日志由后端自己写到 output/logs
+const backendLogPath = path.join(userDataDir, "backend.log");
+// 由桌面端拉起的后台进程 PID（外部启动的靠端口/nodemon 识别）
+let backendChildPid = null;
 
 function debugLog(tag, message) {
     if (process.env.PET_DEBUG !== "1") return;
@@ -85,6 +209,9 @@ debugLog("app", `boot userData=${userDataDir}`);
 const rawPrefs = readJson(files.prefs, {});
 const prefs = {
     size: clampInt(rawPrefs.size, PET_SIZE_DEFAULT, PET_SIZE_MIN, PET_SIZE_MAX),
+    // 手动镜像：角色基础朝向始终翻转
+    mirrored: rawPrefs.mirrored === true,
+    // 贴边镜像：贴右侧时自动转身
     mirror: rawPrefs.mirror === true,
     muted: rawPrefs.muted === true,
     debug: rawPrefs.debug === true
@@ -184,6 +311,24 @@ function petWindowSize() {
     };
 }
 
+/**
+ * 桌宠贴边约束。
+ * 以“可视方块”（size × size，不含窗口四周的透明内边距）为基准，窗口可以探出工作区一个内边距。
+ * 右侧例外：侧边三连按钮是相对窗口右边定位的（right: 3px），窗口探出会把按钮裁掉，
+ * 因此右边界多留一个内边距，让窗口整体留在工作区内。
+ */
+function clampPetOrigin(x, y, area) {
+    const size = prefs.size;
+    const minX = area.x - PET_PADDING;
+    const maxX = area.x + area.width - size - PET_PADDING * 2;
+    const minY = area.y - PET_PADDING;
+    const maxY = area.y + area.height - PET_PADDING - size;
+    return {
+        x: clamp(x, Math.min(minX, maxX), Math.max(minX, maxX)),
+        y: clamp(y, Math.min(minY, maxY), Math.max(minY, maxY))
+    };
+}
+
 function describeDisplays() {
     const primaryId = screen.getPrimaryDisplay().id;
     let secondaryIndex = 0;
@@ -224,9 +369,13 @@ function defaultPetBounds(display) {
     const area = display.workArea;
     const { width, height } = petWindowSize();
     const scale = Number(display.scaleFactor) || 1;
-    const x = alignDip(Math.max(area.x, area.x + area.width - width - PET_MARGIN), scale);
-    const y = alignDip(Math.max(area.y, area.y + area.height - height - PET_MARGIN), scale);
-    return { x, y, width, height };
+    // 距工作区右下角留 PET_MARGIN，按可视方块计算
+    const origin = clampPetOrigin(
+        area.x + area.width - PET_MARGIN - prefs.size - PET_PADDING,
+        area.y + area.height - PET_MARGIN - prefs.size - PET_PADDING,
+        area
+    );
+    return { x: alignDip(origin.x, scale), y: alignDip(origin.y, scale), width, height };
 }
 
 function savePrefs() {
@@ -264,10 +413,11 @@ function saveDisplayState() {
 
 // ---------- 窗口状态 ----------
 function shouldFlip() {
-    if (!prefs.mirror) return false;
     const center = getPetCenter();
     const area = getSelectedDisplay().workArea;
-    return center.x > area.x + area.width / 2;
+    // 手动镜像决定基础朝向，贴边镜像在此基础上再翻一次，两者同时成立等于回到原朝向
+    const edge = prefs.mirror && center.x > area.x + area.width / 2;
+    return edge !== prefs.mirrored;
 }
 
 function buildStatePayload() {
@@ -278,6 +428,7 @@ function buildStatePayload() {
         offline,
         muted: prefs.muted,
         size: prefs.size,
+        mirrored: prefs.mirrored,
         mirror: prefs.mirror,
         debug: prefs.debug,
         flip: shouldFlip(),
@@ -389,15 +540,14 @@ function readReusablePosition() {
     const fallback = defaultPetBounds(display);
     const { width, height } = petWindowSize();
     const area = display.workArea;
+    const origin = clampPetOrigin(
+        Number.isFinite(Number(x)) ? Number(x) : fallback.x,
+        Number.isFinite(Number(y)) ? Number(y) : fallback.y,
+        area
+    );
     return {
-        x: alignDip(
-            clamp(Number.isFinite(Number(x)) ? Number(x) : fallback.x, area.x, area.x + area.width - width),
-            scale
-        ),
-        y: alignDip(
-            clamp(Number.isFinite(Number(y)) ? Number(y) : fallback.y, area.y, area.y + area.height - height),
-            scale
-        ),
+        x: alignDip(origin.x, scale),
+        y: alignDip(origin.y, scale),
         width,
         height
     };
@@ -669,14 +819,13 @@ function resizePetForSize() {
     };
     const display = screen.getDisplayNearestPoint(center);
     const area = display.workArea;
-    const x = alignDip(
-        clamp(center.x - PET_PADDING - prefs.size / 2, area.x, area.x + area.width - width),
-        display.scaleFactor
+    const origin = clampPetOrigin(
+        center.x - PET_PADDING - prefs.size / 2,
+        center.y - PET_PADDING - prefs.size / 2,
+        area
     );
-    const y = alignDip(
-        clamp(center.y - PET_PADDING - prefs.size / 2, area.y, area.y + area.height - height),
-        display.scaleFactor
-    );
+    const x = alignDip(origin.x, display.scaleFactor);
+    const y = alignDip(origin.y, display.scaleFactor);
     petWin.setBounds({ x, y, width, height });
     saveDisplayState();
     updateFlip(true);
@@ -705,9 +854,9 @@ function movePetDragFrame() {
     const point = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(point);
     const area = display.workArea;
-    const { width, height } = petWindowSize();
-    const x = alignDip(clamp(point.x - petDrag.x, area.x, area.x + area.width - width), display.scaleFactor);
-    const y = alignDip(clamp(point.y - petDrag.y, area.y, area.y + area.height - height), display.scaleFactor);
+    const origin = clampPetOrigin(point.x - petDrag.x, point.y - petDrag.y, area);
+    const x = alignDip(origin.x, display.scaleFactor);
+    const y = alignDip(origin.y, display.scaleFactor);
     petDisplayId = display.id;
     const bounds = petWin.getBounds();
     if (bounds.x !== x || bounds.y !== y) {
@@ -915,6 +1064,7 @@ function petVisualRect() {
  * 按旧版桌宠的贴边规则计算气泡/设置浮窗的位置：
  * - 面板：优先在桌宠上方，左右两种对齐依次尝试，放不下再看下方
  * - 小气泡：按桌宠在中线左右决定向左还是向右展开，优先上方
+ * - 桌宠镜像后气泡沿中线反射到另一侧，与当前朝向一致
  * 返回的 x/y 是窗口坐标（已含透明内边距）。
  */
 function computeFloatingBounds(mode, cardWidth, cardHeight) {
@@ -933,6 +1083,8 @@ function computeFloatingBounds(mode, cardWidth, cardHeight) {
     const width = cardWidth + pad * 2;
     const height = cardHeight + pad * 2;
     const isRight = pet.left + pet.width / 2 > area.x + area.width / 2;
+    // 气泡跟随桌宠当前朝向：镜像后沿中线反射到另一侧
+    const preferRight = isRight !== shouldFlip();
 
     // 旧版小气泡会与桌宠重叠 20px，面板则在桌宠左右外侧 4px
     const rightAlignedLeft =
@@ -943,12 +1095,15 @@ function computeFloatingBounds(mode, cardWidth, cardHeight) {
 
     const candidates = [];
     if (mode === "mini") {
-        const x = isRight ? rightAlignedLeft : leftAlignedLeft;
-        candidates.push({ above: true, alignRight: isRight, x, y: aboveTop });
-        candidates.push({ above: false, alignRight: isRight, x, y: belowTop });
+        // 先按镜像后的朝向展开，贴边放不下时再退到另一侧
+        for (const side of [preferRight, !preferRight]) {
+            const x = side ? rightAlignedLeft : leftAlignedLeft;
+            candidates.push({ above: true, alignRight: side, x, y: aboveTop });
+            candidates.push({ above: false, alignRight: side, x, y: belowTop });
+        }
     } else {
         for (const above of [true, false]) {
-            for (const alignRight of [true, false]) {
+            for (const alignRight of preferRight ? [true, false] : [false, true]) {
                 candidates.push({
                     above,
                     alignRight,
@@ -1374,22 +1529,107 @@ function settingsStatePayload() {
     };
 }
 
-async function quickStartProjects() {
-    const result = await api.quickStartProjects();
-    if (!result.ok || !result.json || result.json.res === false) {
-        const message = (result.json && result.json.message) || (result.networkError ? "后台还没有启动喵" : `请求失败（HTTP ${result.status}）`);
-        dialog.showErrorBox("一键启动后台失败", message);
+let backendLaunching = false;
+
+/** 探一次接口判断后台是否在运行（未登录时也能区分网络错误） */
+async function isBackendUp() {
+    const probe = await api.summary("");
+    return !probe.networkError;
+}
+
+/**
+ * 拉起 GitStatus 后台服务本身。
+ * 与“一键启动项目”不同，这里启动的是本仓库的后端进程，供后台未运行时一键恢复。
+ */
+async function startBackendFromDesktop() {
+    if (backendLaunching) return { ok: false, message: "后台正在启动中喵" };
+    if (await isBackendUp()) {
+        await refreshSummary();
+        return { ok: true, message: "后台已经在运行喵" };
+    }
+    if (!backendLaunch.command || !backendLaunch.cwd) {
+        return { ok: false, message: "desktop/config.json 里没有配置后台启动目录或命令" };
+    }
+
+    backendLaunching = true;
+    try {
+        const child = launchBackendProcess();
+        backendChildPid = child.pid ?? null;
+
+        const deadline = Date.now() + 40000;
+        while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            if (await isBackendUp()) {
+                await refreshSummary();
+                updateTrayMenu();
+                return { ok: true, message: "后台已启动喵" };
+            }
+        }
+        return { ok: false, message: "后台启动超时，看看 src/output/logs 里的当天日志" };
+    } catch (error) {
+        return { ok: false, message: `启动失败：${error.message}` };
+    } finally {
+        backendLaunching = false;
+    }
+}
+
+async function stopBackendFromDesktop() {
+    if (!(await isBackendUp())) {
+        await refreshSummary();
+        return { ok: true, message: "后台没有在运行喵" };
+    }
+    killBackendProcessTree();
+    // 等端口释放，避免重启时新进程抢不到端口
+    for (let i = 0; i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (!(await isBackendUp())) {
+            backendChildPid = null;
+            await refreshSummary();
+            updateTrayMenu();
+            return { ok: true, message: "后台已停止喵" };
+        }
+    }
+    return { ok: false, message: "停止超时，可能还有残留进程" };
+}
+
+async function restartBackendFromDesktop() {
+    const stopped = await stopBackendFromDesktop();
+    if (!stopped.ok) return stopped;
+    return startBackendFromDesktop();
+}
+
+/** 启动时自动检测：本机后端没跑就静默拉起，成功后不打扰 */
+async function autoStartBackend() {
+    if (!isLocalServer()) return;
+    // 给同时在外部启动的后台留一点时间，避免刚起就被判定为离线
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const result = await startBackendFromDesktop();
+    if (!result.ok) showBackendNotice(result.message);
+}
+
+/** 托盘动作统一入口：先提示进度，完成后提示结果 */
+async function runBackendAction(action) {
+    const pending = {
+        start: "正在启动后台…",
+        stop: "正在停止后台…",
+        restart: "正在重启后台…"
+    }[action];
+    if (pending) showBackendNotice(pending);
+    const result =
+        action === "stop"
+            ? await stopBackendFromDesktop()
+            : action === "restart"
+              ? await restartBackendFromDesktop()
+              : await startBackendFromDesktop();
+    showBackendNotice(result && result.message ? result.message : "操作完成");
+}
+
+function showBackendNotice(message) {
+    if (Notification.isSupported()) {
+        new Notification({ title: "GitStatus 后台", body: message, silent: true }).show();
         return;
     }
-    const started = Array.isArray(result.json.started) ? result.json.started.length : 0;
-    const skipped = Array.isArray(result.json.skipped) ? result.json.skipped.length : 0;
-    const failed = Array.isArray(result.json.failed) ? result.json.failed.length : 0;
-    const body = `已启动 ${started} 个，跳过 ${skipped} 个，失败 ${failed} 个`;
-    if (Notification.isSupported()) {
-        new Notification({ title: "一键启动后台", body, silent: true }).show();
-    } else {
-        dialog.showMessageBox({ type: "info", title: "一键启动后台", message: body });
-    }
+    dialog.showMessageBox({ type: "info", title: "GitStatus 后台", message });
 }
 // ---------- 托盘 ----------
 function updateTrayMenu() {
@@ -1422,7 +1662,13 @@ function updateTrayMenu() {
         { label: "打开待办", click: () => openTodoWindow(false) },
         { label: "桌宠设置", click: () => openSettingsWindow() },
         ...(token ? [] : [{ label: "登录 GitStatus", click: () => openLoginWindow() }]),
-        { label: "一键启动后台", click: () => void quickStartProjects() },
+        { label: offline ? "启动后台（未运行）" : "启动后台", click: () => void runBackendAction("start") },
+        ...(isLocalServer()
+            ? [
+                  { label: "停止后台", click: () => void runBackendAction("stop") },
+                  { label: "重启后台", click: () => void runBackendAction("restart") }
+              ]
+            : []),
         { label: "重启桌宠", click: restartDesktop },
         { type: "separator" },
         { label: "退出桌宠", click: () => app.quit() }
@@ -1864,6 +2110,10 @@ function registerIpc() {
         if (!senderIsApp(event)) return;
         openExternal(url);
     });
+    ipcMain.handle("app:start-backend", async (event) => {
+        if (!senderIsApp(event)) return { ok: false, message: "窗口已失效" };
+        return startBackendFromDesktop();
+    });
     ipcMain.on("app:retry", (event) => {
         if (senderIs(event, loginWin)) {
             loginWin.loadURL(loginUrl).catch(() => {
@@ -1999,7 +2249,12 @@ function registerIpc() {
         if (key === "size") {
             prefs.size = clampInt(value, prefs.size, PET_SIZE_MIN, PET_SIZE_MAX);
             resizePetForSize();
-        } else if (key === "mirror" || key === "muted" || key === "debug") {
+        } else if (
+            key === "mirrored" ||
+            key === "mirror" ||
+            key === "muted" ||
+            key === "debug"
+        ) {
             prefs[key] = Boolean(value);
         } else {
             return { ok: false };
@@ -2007,6 +2262,11 @@ function registerIpc() {
         savePrefs();
         broadcastState();
         updateFlip(true);
+        // 镜像决定气泡的展开方向和侧边按钮位置，切换后立即重新摆位
+        if (key === "mirrored" || key === "mirror") {
+            repositionBubbleIfVisible();
+            repositionSettingsIfVisible();
+        }
         if (bubbleVisible && bubbleType === "panel") renderBubble(true);
         return { ok: true, prefs: { ...prefs } };
     });
@@ -2097,6 +2357,8 @@ if (!hasLock) {
         screen.on("display-added", handleDisplaysChanged);
         screen.on("display-removed", handleDisplaysChanged);
         startPolling();
+        // 启动时自动检测：本机后端没跑就静默拉起
+        void autoStartBackend();
     });
 
     app.on("will-quit", () => {

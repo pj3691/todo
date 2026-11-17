@@ -2168,7 +2168,11 @@ export const registerProjectFeature = (
 
     projectRouter.put("/quickstart", (req, res) => {
         try {
-            const raw: unknown[] = Array.isArray(req.body?.projectIds) ? req.body.projectIds : [];
+            // 请求体没带 Content-Type 或格式不对时不要静默清空配置，直接报错
+            if (!Array.isArray(req.body?.projectIds)) {
+                throw new ProjectError(400, "projectIds 必须是数组");
+            }
+            const raw: unknown[] = req.body.projectIds;
             const requested = Array.from(
                 new Set(
                     raw

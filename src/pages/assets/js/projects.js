@@ -2085,10 +2085,19 @@
     // 一键启动配置同步到后端，桌面端托盘“一键启动后台”读取的就是这份数据
     async function syncOneShotToServer(ids) {
         try {
-            await api("/projects/quickstart", {
+            const json = await api("/projects/quickstart", {
                 method: "PUT",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ projectIds: ids }),
             });
+            // 后端会过滤掉已不存在的项目，以它返回的列表为准，避免本地镜像与后端漂移
+            const saved = Array.isArray(json.projectIds)
+                ? json.projectIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+                : [];
+            if (saved.length !== ids.length) {
+                state.oneShotIds = saved;
+                persistOneShotIds(saved);
+            }
         } catch {
             /* 后端不可用时只保留本地配置 */
         }
@@ -2118,7 +2127,7 @@
             .filter((id) => Number.isInteger(id) && id > 0);
         state.oneShotIds = ids;
         persistOneShotIds(ids);
-        void syncOneShotToServer(ids);
+        void syncOneShotToServer(ids).then(() => updateOneShotButton());
         updateOneShotButton();
         closeOneShotModal();
         showToast(ids.length ? `已保存 ${ids.length} 个一键启动项目` : "已清空一键启动配置");

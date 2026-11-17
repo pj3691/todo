@@ -205,13 +205,6 @@ function createApi({ serverUrl, getToken }) {
         return dataUrlFor(buffer, mime);
     }
 
-    async function quickStartProjects() {
-        return request(`${API_PREFIX}/projects/local/quickstart`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" }
-        });
-    }
-
     return {
         absolute,
         summary,
@@ -219,8 +212,7 @@ function createApi({ serverUrl, getToken }) {
         saveSettings,
         uploadPetImage,
         deletePetImage,
-        fetchPetImageDataUrl,
-        quickStartProjects
+        fetchPetImageDataUrl
     };
 }
 

@@ -27,6 +27,9 @@ body {
 /* 必须与 main.js 的 PET_PADDING 保持一致 */
 .pet {
     --pet-size: 76px;
+    /* 侧边按钮尺寸与贴边间距：镜像时按这两个值反射到左侧 */
+    --side-btn-size: 25px;
+    --side-btn-gap: 3px;
     position: absolute;
     inset: 0;
     padding: 10px;
@@ -173,10 +176,10 @@ body {
 /* ---------- 右侧三连小按钮（菜单 / 新建 / 待办） ---------- */
 .pet-side-btn {
     position: absolute;
-    right: 3px;
+    right: var(--side-btn-gap, 3px);
     z-index: 3;
-    width: 25px;
-    height: 25px;
+    width: var(--side-btn-size, 25px);
+    height: var(--side-btn-size, 25px);
     padding: 0;
     display: flex;
     align-items: center;
@@ -208,6 +211,23 @@ body {
 
 .pet-todo-btn {
     top: 61px;
+}
+
+/* 镜像后整组按钮沿桌宠中线反射：右贴边距同值换成左贴边距 */
+.pet.is-flipped .pet-side-btn {
+    right: auto;
+    left: var(--side-btn-gap, 3px);
+}
+
+/* 徽标和打盹的 z 同步反射，避免被左侧按钮盖住 */
+.pet.is-flipped .pet-badge {
+    left: auto;
+    right: var(--side-btn-gap, 3px);
+}
+
+.pet.is-flipped .pet-zzz {
+    right: auto;
+    left: 5px;
 }
 
 .pet-side-btn:hover {

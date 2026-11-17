@@ -98,6 +98,17 @@
             background: #1a6a43;
         }
 
+        button.ghost {
+            margin-top: 8px;
+            color: #1f7a4d;
+            background: #fff;
+            border: 1px solid #cfe3d6;
+        }
+
+        button.ghost:hover {
+            background: #f2f8f4;
+        }
+
         button:disabled {
             cursor: default;
             opacity: 0.6;
@@ -108,10 +119,12 @@
     <div class="card">
         <span class="badge">GITSTATUS PET</span>
         <h1>后台还没有启动喵</h1>
-        <p>请先在项目根目录启动后端，再点下面的按钮重新连接。</p>
+        <p>可以直接点「启动后台」，或到项目根目录手动启动。</p>
         <code>npx tsx src/index.ts</code>
         <p class="server" id="server"></p>
-        <button id="retry" type="button">重新连接</button>
+        <button id="launch" type="button">启动后台</button>
+        <button id="retry" class="ghost" type="button">重新连接</button>
+        <p class="server" id="status"></p>
     </div>
     <script>
         const params = new URLSearchParams(location.search);
@@ -128,6 +141,24 @@
                 button.disabled = false;
                 button.textContent = "重新连接";
             }, 3000);
+        });
+
+        // 后台没跑时由主进程拉起本仓库的后端，成功后再重连
+        document.getElementById("launch").addEventListener("click", async () => {
+            const button = document.getElementById("launch");
+            const status = document.getElementById("status");
+            if (!window.desktopApi?.startBackend) {
+                status.textContent = "当前环境不支持自动启动后台";
+                return;
+            }
+            button.disabled = true;
+            button.textContent = "启动中…";
+            status.textContent = "";
+            const result = await window.desktopApi.startBackend();
+            button.disabled = false;
+            button.textContent = "启动后台";
+            status.textContent = (result && result.message) || "";
+            if (result && result.ok) window.desktopApi?.retry();
         });
     </script>
 </body>

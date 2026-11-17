@@ -539,14 +539,13 @@ const isLoopbackRequest = (req: express.Request): boolean => {
 };
 
 /**
- * 用系统默认程序打开附件。
- * 浏览器无法直接调用本地程序，改由后端以原文件名复制到临时目录后交给系统打开。
+ * 把附件按原始文件名复制一份到临时目录，返回副本路径。
+ * 存储层用的是 UUID 文件名，直接给系统打开或展示都不友好。
  */
-const openAttachmentWithSystem = (
+const prepareAttachmentCopy = (
   attachment: TodoAttachmentRow,
   sourcePath: string,
-  logWarn: (message: string) => void,
-): void => {
+): string => {
   const originalName = sanitizeUploadFileName(attachment.original_name) || "attachment";
   const fallbackExtension = path.extname(attachment.stored_name);
   const fileName = path.extname(originalName)
@@ -561,6 +560,19 @@ const openAttachmentWithSystem = (
     // 上一次打开的副本仍被系统程序占用时直接复用，同一附件内容不会变化
     if (!fs.existsSync(targetPath)) throw new Error("failed to prepare attachment for opening");
   }
+  return targetPath;
+};
+
+/**
+ * 用系统默认程序打开附件。
+ * 浏览器无法直接调用本地程序，改由后端以原文件名复制到临时目录后交给系统打开。
+ */
+const openAttachmentWithSystem = (
+  attachment: TodoAttachmentRow,
+  sourcePath: string,
+  logWarn: (message: string) => void,
+): void => {
+  const targetPath = prepareAttachmentCopy(attachment, sourcePath);
 
   const command =
     process.platform === "win32"
@@ -577,6 +589,41 @@ const openAttachmentWithSystem = (
   });
   child.on("error", (error) => {
     logWarn(`[todo] failed to open attachment ${attachment.id}: ${error.message}`);
+  });
+  child.unref();
+};
+
+/**
+ * 在系统文件管理器中定位附件。
+ * 直接定位真实存储文件（todo-images/<用户ID>/），不再拷到临时目录，
+ * 避免用户以为附件被挪到了 C 盘 Temp。
+ */
+const revealAttachmentInFolder = (
+  attachment: TodoAttachmentRow,
+  sourcePath: string,
+  logWarn: (message: string) => void,
+): void => {
+  const targetPath = sourcePath;
+  const command =
+    process.platform === "win32"
+      ? "explorer.exe"
+      : process.platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  const args =
+    process.platform === "win32"
+      ? ["/select,", targetPath]
+      : process.platform === "darwin"
+        ? ["-R", targetPath]
+        : [path.dirname(targetPath)];
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    // 不能带 windowsHide：它会给 explorer.exe 加上隐藏窗口标志，
+    // 资源管理器会以隐藏状态打开，用户看不到窗口。
+  });
+  child.on("error", (error) => {
+    logWarn(`[todo] failed to reveal attachment ${attachment.id}: ${error.message}`);
   });
   child.unref();
 };
@@ -2920,6 +2967,35 @@ export const registerTodoFeature = (
       res.json({ res: true, message: "opened" });
     } catch (error) {
       sendRouteError(res, error, "open todo attachment", logError);
+    }
+  });
+  /** 在文件管理器中定位非图片附件（仅限本机访问） */
+  todoAttachmentRouter.get("/:id/reveal", (req, res) => {
+    try {
+      const userId = getRequestUserId(req);
+      const attachmentId = parsePositiveId(req.params.id, "attachment id");
+      // 打开资源管理器属于宿主机行为，远程设备直接拒绝
+      if (!isLoopbackRequest(req)) {
+        fail(403, "reveal in folder is only available on the host machine");
+      }
+      const attachment = getTodoAttachmentByIdStmt.get(attachmentId) as
+        | TodoAttachmentRow
+        | undefined;
+      if (!attachment) fail(404, "attachment not found");
+      getTodoAccess(userId, attachment.todo_id);
+      if (attachment.kind !== "file") {
+        fail(400, "images are previewed in the browser");
+      }
+      const fullPath = path.join(
+        todoAttachmentsDir,
+        String(attachment.user_id),
+        attachment.stored_name,
+      );
+      if (!fs.existsSync(fullPath)) fail(404, "attachment file not found");
+      revealAttachmentInFolder(attachment, fullPath, logWarn);
+      res.json({ res: true, message: "revealed" });
+    } catch (error) {
+      sendRouteError(res, error, "reveal todo attachment", logError);
     }
   });
   // ========== 数据共享 API ==========

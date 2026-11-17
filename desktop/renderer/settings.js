@@ -39,7 +39,13 @@
 
     let runtime = null;
     let draft = null;
-    let prefs = { size: PET_SIZE_DEFAULT, mirror: false, muted: false, debug: false };
+    let prefs = {
+        size: PET_SIZE_DEFAULT,
+        mirrored: false,
+        mirror: false,
+        muted: false,
+        debug: false
+    };
     let displaySelect = null;
     let assetThumb = null;
 
@@ -115,6 +121,7 @@
     function readPrefs(state) {
         return {
             size: toBoundedInt(state && state.size, PET_SIZE_DEFAULT, PET_SIZE_MIN, PET_SIZE_MAX),
+            mirrored: Boolean(state && state.mirrored),
             mirror: Boolean(state && state.mirror),
             muted: Boolean(state && state.muted),
             debug: Boolean(state && state.debug)
@@ -451,6 +458,12 @@
         sizeRow.append(sizeInput, sizeText);
 
         section.append(sizeRow);
+        section.append(
+            createCheck("镜像角色（默认关闭）", prefs.mirrored, (value) => {
+                prefs.mirrored = value;
+                void api.setPreference("mirrored", value);
+            }).node
+        );
         section.append(
             createCheck("贴右侧时镜像转身（默认关闭）", prefs.mirror, (value) => {
                 prefs.mirror = value;
