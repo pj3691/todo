@@ -451,7 +451,8 @@ const LOCAL_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const PRIORITIES: TodoPriority[] = ["low", "normal", "high"];
-const TODO_IMAGE_MIME_EXT: Record<string, string> = {
+/** 附件允许的图片类型与归档扩展名，AI 助手页的对话附件也复用这张表 */
+export const TODO_IMAGE_MIME_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/jpg": ".jpg",
   "image/png": ".png",
@@ -464,10 +465,10 @@ const TODO_IMAGE_MIME_EXT: Record<string, string> = {
 /** 附件限制：图片保持原有 5 张 / 8 MB，其他文件单独计数 */
 const MAX_TODO_IMAGES = 5;
 const MAX_TODO_FILES = 10;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const MAX_FILE_BYTES = 32 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 /** 不允许保存的可执行文件后缀，避免附件区被当作分发渠道 */
-const BLOCKED_FILE_EXTENSIONS = new Set([
+export const BLOCKED_FILE_EXTENSIONS = new Set([
   ".exe", ".msi", ".bat", ".cmd", ".com", ".scr", ".pif",
   ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
   ".sh", ".jar", ".reg", ".lnk",
@@ -475,18 +476,18 @@ const BLOCKED_FILE_EXTENSIONS = new Set([
 
 type TodoAttachmentKind = "image" | "file";
 
-const attachmentKindOf = (mime: string): TodoAttachmentKind =>
+export const attachmentKindOf = (mime: string): TodoAttachmentKind =>
   TODO_IMAGE_MIME_EXT[String(mime || "").toLowerCase()] ? "image" : "file";
 
 /** 从原始文件名中提取安全的扩展名；不可用时按 MIME 兜底 */
-const safeFileExtension = (originalName: string, mime: string): string => {
+export const safeFileExtension = (originalName: string, mime: string): string => {
   const match = /^[^.]+(\.[A-Za-z0-9]{1,10})$/.exec(String(originalName || ""));
   if (match && match[1]) return match[1].toLowerCase();
   return TODO_IMAGE_MIME_EXT[mime] ?? ".bin";
 };
 
 /** multer 以 latin1 解析文件名，非 ASCII 名称需要还原为 UTF-8 */
-const decodeUploadFileName = (raw: string): string => {
+export const decodeUploadFileName = (raw: string): string => {
   if (!/[^\x00-\x7F]/.test(raw)) return raw;
   try {
     const decoded = Buffer.from(raw, "latin1").toString("utf8");
@@ -497,7 +498,7 @@ const decodeUploadFileName = (raw: string): string => {
 };
 
 /** 去掉路径分隔符与控制字符，只保留文件名本身 */
-const sanitizeUploadFileName = (raw: string): string => {
+export const sanitizeUploadFileName = (raw: string): string => {
   const base = path.basename(String(raw || "").replace(/\\/g, "/"));
   return base.replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, 255);
 };

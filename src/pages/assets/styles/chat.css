@@ -144,6 +144,7 @@ body.chat-body {
 /* ---------- 主区 ---------- */
 
 .chat-main {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -408,11 +409,17 @@ body.chat-body {
 .chat-composer {
     flex: none;
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 8px;
     padding: 10px 20px 16px;
     border-top: 1px solid var(--line);
     background: var(--surface);
+}
+
+.chat-composer-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
 }
 
 .chat-composer textarea {
@@ -478,6 +485,138 @@ body.chat-body {
 
 .chat-stop:hover {
     background: var(--red-soft);
+}
+
+/* ---------- 附件 ---------- */
+
+.chat-attach-btn {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.chat-attach-btn:hover:not(:disabled) {
+    border-color: var(--green);
+    background: var(--green-soft);
+    color: var(--green-strong);
+}
+
+.chat-attach-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.chat-attach-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.chat-attach-list.hidden {
+    display: none;
+}
+
+.chat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 4px 6px 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface-soft);
+    color: var(--text-soft);
+    font-size: 0.74rem;
+    line-height: 1.4;
+}
+
+.chat-chip-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+}
+
+.chat-chip-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chat-chip-size {
+    flex: none;
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+
+.chat-chip-remove {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.chat-chip-remove:hover {
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+.chat-chip.is-uploading {
+    opacity: 0.7;
+}
+
+.chat-chip.is-error {
+    border-color: #f3c9c4;
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+.chat-chip.is-bound .chat-chip-size {
+    color: var(--green-strong);
+}
+
+/* 拖拽时盖住消息区；pointer-events 关掉，否则会抢走 drop 事件 */
+.chat-drop-mask {
+    position: absolute;
+    inset: 10px;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--green);
+    border-radius: var(--radius-md);
+    background: rgba(232, 245, 237, 0.94);
+    color: var(--green-strong);
+    font-size: 0.9rem;
+    font-weight: 700;
+    pointer-events: none;
+}
+
+.chat-drop-mask.hidden {
+    display: none;
+}
+
+/* 用户消息下的附件快照 */
+.msg-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
 }
 
 /* ---------- 模型设置 ---------- */

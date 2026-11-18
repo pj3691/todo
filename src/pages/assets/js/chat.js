@@ -22,6 +22,10 @@
         input: document.getElementById("input"),
         sendBtn: document.getElementById("sendBtn"),
         stopBtn: document.getElementById("stopBtn"),
+        attachBtn: document.getElementById("attachBtn"),
+        attachInput: document.getElementById("attachInput"),
+        attachList: document.getElementById("attachList"),
+        dropMask: document.getElementById("dropMask"),
         llmSettingsBtn: document.getElementById("llmSettingsBtn"),
         llmModal: document.getElementById("llmModal"),
         llmCloseBtn: document.getElementById("llmCloseBtn"),
@@ -41,6 +45,14 @@
 
     const ROLE_LABEL = { admin: "管理员", readwrite: "读写", readonly: "只读" };
 
+    // 与后端 chat/attachments 的限制保持一致
+    const ATTACH_MAX_FILES = 5;
+    const ATTACH_MAX_BYTES = 32 * 1024 * 1024;
+    const BLOCKED_FILE_RE = /\.(exe|msi|bat|cmd|com|scr|pif|ps1|vbs|vbe|js|jse|wsf|wsh|sh|jar|reg|lnk)$/i;
+
+    const FILE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>';
+    const IMAGE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>';
+
     const state = {
         user: null,
         configured: false,
@@ -51,6 +63,10 @@
         streaming: false,
         controller: null,
         noticeTimer: 0,
+        /** 待发送的附件，status=ready 时才有服务端 id */
+        attachments: [],
+        /** 正在上传的数量，大于 0 时不允许发送 */
+        uploading: 0,
     };
 
     const node = (tag, className, text) => {
@@ -95,14 +111,173 @@
     function updateComposerState() {
         const disabled = !state.user || !state.configured || state.streaming;
         dom.input.disabled = disabled;
-        dom.sendBtn.disabled = disabled;
+        dom.attachBtn.disabled = disabled;
+        // 上传未完成时不能发送：附件还没拿到服务端编号，模型无法引用
+        dom.sendBtn.disabled = disabled || state.uploading > 0;
         dom.sendBtn.classList.toggle("hidden", state.streaming);
         dom.stopBtn.classList.toggle("hidden", !state.streaming);
         dom.input.placeholder = !state.user
             ? "请先登录后再使用助手"
             : !state.configured
                 ? "后端尚未配置 LLM，请先补齐 config/config.json 的 llm 段"
-                : "输入问题，Enter 发送，Shift + Enter 换行";
+                : "输入问题，Enter 发送，Shift + Enter 换行；文件可直接拖进来";
+    }
+
+    // ---------- 附件 ----------
+
+    function formatSize(bytes) {
+        const value = Number(bytes) || 0;
+        if (value < 1024) return `${value} B`;
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+        return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    /** 历史消息里的附件快照：只读，不能移除 */
+    function buildAttachmentChip(item) {
+        const chip = node("span", "chat-chip");
+        const bound = Number(item.boundTodoId) || 0;
+        if (bound) chip.classList.add("is-bound");
+        const icon = node("span", "chat-chip-icon");
+        icon.innerHTML = item.kind === "image" ? IMAGE_ICON : FILE_ICON;
+        const name = node("span", "chat-chip-name", item.name || "附件");
+        name.title = item.name || "";
+        chip.append(
+            icon,
+            name,
+            node("span", "chat-chip-size", bound ? `已加入 #${bound}` : formatSize(item.size)),
+        );
+        return chip;
+    }
+
+    /** 输入区里待发送的附件：带上传状态与移除按钮 */
+    function renderAttachments() {
+        dom.attachList.replaceChildren();
+        dom.attachList.classList.toggle("hidden", state.attachments.length === 0);
+        for (const item of state.attachments) {
+            const chip = node("span", "chat-chip");
+            chip.classList.toggle("is-uploading", item.status === "uploading");
+            chip.classList.toggle("is-error", item.status === "error");
+            const icon = node("span", "chat-chip-icon");
+            icon.innerHTML = item.kind === "image" ? IMAGE_ICON : FILE_ICON;
+            const name = node("span", "chat-chip-name", item.name);
+            name.title = item.status === "error" ? item.error || item.name : item.name;
+            chip.append(icon, name);
+            if (item.status === "uploading") {
+                chip.append(node("span", "chat-chip-size", "上传中…"));
+            } else if (item.status === "error") {
+                chip.append(node("span", "chat-chip-size", "失败"));
+            } else {
+                chip.append(node("span", "chat-chip-size", formatSize(item.size)));
+            }
+            const remove = node("button", "chat-chip-remove", "×");
+            remove.type = "button";
+            remove.title = "移除附件";
+            remove.addEventListener("click", () => void removeAttachment(item));
+            chip.append(remove);
+            dom.attachList.appendChild(chip);
+        }
+    }
+
+    async function removeAttachment(item) {
+        state.attachments = state.attachments.filter((entry) => entry.key !== item.key);
+        renderAttachments();
+        updateComposerState();
+        if (item.status !== "ready" || !item.id) return;
+        try {
+            await Auth.apiFetch(`/chat/attachments/${item.id}`, { method: "DELETE" });
+        } catch {
+            /* 已经绑定或已被清理，不影响界面 */
+        }
+    }
+
+    /** 选文件 / 拖文件 / 粘贴图片都走这里：一次请求上传，服务端按顺序返回编号 */
+    async function addFiles(fileList) {
+        if (!state.user) {
+            showNotice("请先登录后再添加附件", "error");
+            return;
+        }
+        const incoming = Array.from(fileList || []);
+        if (incoming.length === 0) return;
+
+        const room = ATTACH_MAX_FILES - state.attachments.length;
+        if (room <= 0) {
+            showNotice(`一次最多 ${ATTACH_MAX_FILES} 个附件`, "error");
+            return;
+        }
+        if (incoming.length > room) {
+            showNotice(`一次最多 ${ATTACH_MAX_FILES} 个附件，多余的已忽略`, "error");
+        }
+
+        const accepted = [];
+        for (const file of incoming.slice(0, room)) {
+            if (file.size > ATTACH_MAX_BYTES) {
+                showNotice(`${file.name} 超过 32 MB`, "error");
+                continue;
+            }
+            if (BLOCKED_FILE_RE.test(file.name)) {
+                showNotice(`${file.name} 是不允许上传的文件类型`, "error");
+                continue;
+            }
+            accepted.push(file);
+        }
+        if (accepted.length === 0) return;
+
+        const entries = accepted.map((file) => ({
+            key: `a${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            name: file.name,
+            size: file.size,
+            kind: String(file.type || "").startsWith("image/") ? "image" : "file",
+            status: "uploading",
+            error: "",
+            id: 0,
+        }));
+        state.attachments.push(...entries);
+        state.uploading += entries.length;
+        renderAttachments();
+        updateComposerState();
+
+        try {
+            const form = new FormData();
+            accepted.forEach((file) => form.append("files", file, file.name));
+            if (state.activeId) form.append("sessionId", state.activeId);
+            const response = await Auth.apiFetch("/chat/attachments", { method: "POST", body: form });
+            const json = await Auth.parseJson(response);
+            if (!response.ok || !json.res) throw new Error(json.message || "上传失败");
+            const created = Array.isArray(json.attachments) ? json.attachments : [];
+            entries.forEach((entry, index) => {
+                const live = state.attachments.find((item) => item.key === entry.key);
+                if (!live) return;
+                const saved = created[index];
+                if (!saved) {
+                    live.status = "error";
+                    live.error = "服务端没有返回附件信息";
+                    return;
+                }
+                live.id = Number(saved.id) || 0;
+                live.size = Number(saved.size) || live.size;
+                live.kind = saved.kind || live.kind;
+                live.status = live.id ? "ready" : "error";
+            });
+        } catch (error) {
+            entries.forEach((entry) => {
+                const live = state.attachments.find((item) => item.key === entry.key);
+                if (live) {
+                    live.status = "error";
+                    live.error = error.message || "上传失败";
+                }
+            });
+            if (error.status !== 401) showNotice(error.message || "附件上传失败", "error");
+        } finally {
+            state.uploading = Math.max(0, state.uploading - entries.length);
+            renderAttachments();
+            updateComposerState();
+        }
+    }
+
+    /** 拖拽时只有带文件的拖动才接管，避免抢掉文本拖选 */
+    function dragHasFiles(event) {
+        const types = event.dataTransfer && event.dataTransfer.types;
+        return Boolean(types && Array.from(types).includes("Files"));
     }
 
     // ---------- 渲染 ----------
@@ -173,9 +348,17 @@
         return { details, status, resultPre, resultSection };
     }
 
-    function buildUserMessage(content) {
+    function buildUserMessage(content, attachments) {
         const wrap = node("div", "msg is-user");
-        wrap.append(node("span", "msg-role", "我"), node("div", "msg-bubble", content));
+        wrap.append(node("span", "msg-role", "我"));
+        const list = Array.isArray(attachments) ? attachments : [];
+        const text = content || (list.length > 0 ? `（附件：${list.map((item) => item.name).join("、")}）` : "");
+        wrap.appendChild(node("div", "msg-bubble", text));
+        if (list.length > 0) {
+            const box = node("div", "msg-attachments");
+            for (const item of list) box.appendChild(buildAttachmentChip(item));
+            wrap.appendChild(box);
+        }
         return wrap;
     }
 
@@ -202,7 +385,9 @@
         dom.messages.replaceChildren();
         for (const message of messages) {
             dom.messages.appendChild(
-                message.role === "user" ? buildUserMessage(message.content) : buildAssistantMessage(message),
+                message.role === "user"
+                    ? buildUserMessage(message.content, message.attachments)
+                    : buildAssistantMessage(message),
             );
         }
         updateEmptyState();
@@ -503,7 +688,18 @@
 
     // ---------- 发送 ----------
 
-    async function sendMessage(text) {
+    /** 表单提交入口：文字与附件至少要有一个 */
+    function submitComposer() {
+        if (state.streaming || state.uploading > 0) return;
+        const text = dom.input.value.trim();
+        const ready = state.attachments.filter((item) => item.status === "ready" && item.id > 0);
+        if (!text && ready.length === 0) return;
+        dom.input.value = "";
+        dom.input.style.height = "auto";
+        void sendMessage(text, ready);
+    }
+
+    async function sendMessage(text, attachments) {
         if (!state.user) {
             showNotice("请先登录后再使用助手", "error");
             return;
@@ -512,6 +708,10 @@
             showNotice("后端尚未配置 LLM，无法发送", "error");
             return;
         }
+        const files = Array.isArray(attachments) ? attachments : [];
+        const attachmentIds = files
+            .map((item) => Number(item.id))
+            .filter((id) => Number.isInteger(id) && id > 0);
         if (!state.activeId) {
             const id = await createSession();
             if (!id) return;
@@ -520,7 +720,7 @@
         hideNotice();
         const sessionId = state.activeId;
         dom.chatEmpty.classList.add("hidden");
-        dom.messages.appendChild(buildUserMessage(text));
+        dom.messages.appendChild(buildUserMessage(text, files));
         scrollToBottom(true);
 
         // 流式占位：先建好气泡和工具容器，后面原地更新
@@ -547,13 +747,21 @@
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ content: text }),
+                    body: JSON.stringify({ content: text, attachmentIds }),
                     signal: state.controller.signal,
                 },
             );
             if (!response.ok) {
                 const json = await Auth.parseJson(response);
                 throw new Error(json.message || `请求失败（${response.status}）`);
+            }
+
+            // 服务端已接收：把已发送的附件从输入区移除（可能还有其他上传中的）
+            if (files.length > 0) {
+                const sentKeys = new Set(files.map((item) => item.key));
+                state.attachments = state.attachments.filter((item) => !sentKeys.has(item.key));
+                renderAttachments();
+                updateComposerState();
             }
 
             await consumeSse(response, (event, data) => {
@@ -658,12 +866,59 @@
 
         dom.composer.addEventListener("submit", (event) => {
             event.preventDefault();
-            if (state.streaming) return;
-            const text = dom.input.value.trim();
-            if (!text) return;
-            dom.input.value = "";
-            dom.input.style.height = "auto";
-            void sendMessage(text);
+            submitComposer();
+        });
+
+        // 附件：点选、拖入窗口、粘贴图片都进同一个上传入口
+        dom.attachBtn.addEventListener("click", () => dom.attachInput.click());
+        dom.attachInput.addEventListener("change", () => {
+            if (dom.attachInput.files) void addFiles(dom.attachInput.files);
+            dom.attachInput.value = "";
+        });
+        dom.input.addEventListener("paste", (event) => {
+            const files = event.clipboardData && event.clipboardData.files;
+            if (files && files.length > 0) {
+                event.preventDefault();
+                void addFiles(files);
+            }
+        });
+
+        const dropZone = dom.messages.closest(".chat-main") || document.body;
+        let dragDepth = 0;
+        dropZone.addEventListener("dragenter", (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            dragDepth += 1;
+            dom.dropMask.classList.remove("hidden");
+        });
+        dropZone.addEventListener("dragover", (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        });
+        dropZone.addEventListener("dragleave", () => {
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) dom.dropMask.classList.add("hidden");
+        });
+        dropZone.addEventListener("drop", (event) => {
+            if (!dragHasFiles(event)) return;
+            event.preventDefault();
+            dragDepth = 0;
+            dom.dropMask.classList.add("hidden");
+            const files = event.dataTransfer && event.dataTransfer.files;
+            if (files && files.length > 0) void addFiles(files);
+        });
+        // 拖到窗口外面松手时清掉遮罩
+        window.addEventListener("dragend", () => {
+            dragDepth = 0;
+            dom.dropMask.classList.add("hidden");
+        });
+        // 阻止浏览器默认行为：否则拖到页面空白处会直接打开文件、丢掉当前会话
+        window.addEventListener("dragover", (event) => {
+            if (dragHasFiles(event)) event.preventDefault();
+        });
+        window.addEventListener("drop", (event) => {
+            if (dragHasFiles(event)) event.preventDefault();
         });
 
         dom.stopBtn.addEventListener("click", () => {

@@ -4,7 +4,7 @@
  * 全部走 /gitstatus/api 的既有接口：MCP 只负责「参数收敛 + 结果投影」，
  * 归属校验、共享权限、完成口径等业务规则仍由后端决定。
  */
-import { defineTool, type ToolDefinition } from "../define-tool.js";
+import { defineTool, type ToolContext, type ToolDefinition } from "../define-tool.js";
 import {
   asArray,
   asBoolean,
@@ -37,6 +37,46 @@ const renderTodoPage = (payload: unknown): string => {
 const renderTodoChanged = (payload: unknown, verb: string): string => {
   const todo = asRecord(asRecord(payload).todo);
   return `${verb}：${todoLine(todo)}`;
+};
+
+/** 把 attachmentIds 收敛成去重后的正整数数组 */
+const normalizeAttachmentIds = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  for (const item of value) {
+    const id = Number(item);
+    if (Number.isInteger(id) && id > 0) seen.add(id);
+  }
+  return [...seen];
+};
+
+/**
+ * 附件编号必须落在本会话尚未绑定的附件里。
+ * 越界通常意味着模型编了 id 或抄了别的会话的编号，直接报错让它改用正确来源。
+ */
+const assertAttachmentScope = (ctx: ToolContext, ids: number[]): void => {
+  if (ids.length === 0) return;
+  if (!ctx.attachments) {
+    throw new Error("附件只能在内置 AI 助手的对话中使用：请先把文件拖进对话框再发消息。");
+  }
+  const available = new Set(ctx.attachments.availableIds);
+  const unknown = ids.filter((id) => !available.has(id));
+  if (unknown.length > 0) {
+    throw new Error(
+      `附件编号 ${unknown.join("、")} 不在本会话可用范围内；只能引用对话消息里列出的附件编号。`,
+    );
+  }
+};
+
+/** 绑定附件并把逐条结果渲染成缩进行 */
+const bindAttachments = async (
+  ctx: ToolContext,
+  todoId: number,
+  ids: number[],
+): Promise<string[]> => {
+  if (ids.length === 0 || !ctx.attachments) return [];
+  const results = await ctx.attachments.bind(todoId, ids);
+  return results.map((item) => `  · ${item.name}：${item.message}`);
 };
 
 export const todoTools: ToolDefinition[] = [
@@ -134,10 +174,25 @@ export const todoTools: ToolDefinition[] = [
       repeatEndDate: { type: "string", description: "每日任务结束日期 YYYY-MM-DD" },
       tagIds: { type: "integer[]", description: "标签 id 列表" },
       sortOrder: { type: "integer", description: "排序值，默认 0" },
+      attachmentIds: {
+        type: "integer[]",
+        description:
+          "要随待办一起保存的对话附件编号（消息里以 #编号 标注）。"
+          + "只在「AI 助手」页的对话里有效，编号必须是本会话消息中列出的附件",
+      },
     },
     async run(ctx, args) {
-      const payload = await ctx.api.post("/todos", args);
-      return { text: renderTodoChanged(payload, "已新建待办"), structured: payload };
+      const attachmentIds = normalizeAttachmentIds(args.attachmentIds);
+      const { attachmentIds: _attachmentIds, ...body } = args;
+      // 先校验再建待办：编号不合法时不要留下一条没有附件的待办
+      assertAttachmentScope(ctx, attachmentIds);
+      const payload = await ctx.api.post("/todos", body);
+      const todoId = asNumber(asRecord(asRecord(payload).todo).id) ?? 0;
+      const lines = todoId > 0 ? await bindAttachments(ctx, todoId, attachmentIds) : [];
+      return {
+        text: [renderTodoChanged(payload, "已新建待办"), ...(lines.length > 0 ? ["附件：", ...lines] : [])].join("\n"),
+        structured: payload,
+      };
     },
   }),
 
@@ -169,12 +224,22 @@ export const todoTools: ToolDefinition[] = [
       repeatEndDate: { type: "string", description: "每日任务结束日期" },
       tagIds: { type: "integer[]", description: "替换后的标签 id 列表" },
       sortOrder: { type: "integer", description: "新排序值" },
+      attachmentIds: {
+        type: "integer[]",
+        description: "追加到这条待办的对话附件编号；已有的附件不受影响",
+      },
     },
     async run(ctx, args) {
       const id = asNumber(args.id) ?? 0;
-      const { id: _ignored, ...body } = args;
+      const attachmentIds = normalizeAttachmentIds(args.attachmentIds);
+      const { id: _ignored, attachmentIds: _attachmentIds, ...body } = args;
+      assertAttachmentScope(ctx, attachmentIds);
       const payload = await ctx.api.patch(`/todos/${id}`, body);
-      return { text: renderTodoChanged(payload, "已修改待办"), structured: payload };
+      const lines = await bindAttachments(ctx, id, attachmentIds);
+      return {
+        text: [renderTodoChanged(payload, "已修改待办"), ...(lines.length > 0 ? ["附件：", ...lines] : [])].join("\n"),
+        structured: payload,
+      };
     },
   }),
 

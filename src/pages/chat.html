@@ -72,10 +72,23 @@
             <div class="chat-messages" id="messages" aria-live="polite"></div>
 
             <form class="chat-composer" id="composer">
-                <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行" autocomplete="off"></textarea>
-                <button class="chat-send" id="sendBtn" type="submit">发送</button>
-                <button class="chat-stop hidden" id="stopBtn" type="button">停止</button>
+                <div class="chat-attach-list hidden" id="attachList" aria-live="polite"></div>
+                <div class="chat-composer-row">
+                    <button class="chat-attach-btn" id="attachBtn" type="button" title="添加附件（也可以直接把文件拖进来）" aria-label="添加附件">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                        </svg>
+                    </button>
+                    <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行" autocomplete="off"></textarea>
+                    <button class="chat-send" id="sendBtn" type="submit">发送</button>
+                    <button class="chat-stop hidden" id="stopBtn" type="button">停止</button>
+                </div>
+                <input id="attachInput" type="file" multiple hidden />
             </form>
+
+            <div class="chat-drop-mask hidden" id="dropMask" aria-hidden="true">
+                <span>松开即可添加附件</span>
+            </div>
         </section>
     </main>
 

@@ -10,14 +10,29 @@
  * - 会话与消息落 SQLite，刷新不丢；中断时保留已生成内容
  */
 import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import express from "express";
+import multer from "multer";
 import type Database from "better-sqlite3";
 import { createApiClient } from "./mcp/api-client.js";
-import { ToolRegistry, type ToolContext, type UserRole } from "./mcp/define-tool.js";
+import {
+  ToolRegistry,
+  type ChatAttachmentBridge,
+  type ToolContext,
+  type UserRole,
+} from "./mcp/define-tool.js";
 import { allTools } from "./mcp/tools/index.js";
 import { formatLocalDateTime, weekdayOf } from "./mcp/tools/time.js";
 import { createLlmStore, type LlmConfig } from "./chat-llm.js";
+import {
+  BLOCKED_FILE_EXTENSIONS,
+  MAX_IMAGE_BYTES,
+  attachmentKindOf,
+  decodeUploadFileName,
+  safeFileExtension,
+  sanitizeUploadFileName,
+} from "./todo.js";
 
 type ChatFeatureOptions = {
   db: Database.Database;
@@ -63,12 +78,50 @@ type MessagePayload = {
   toolCalls?: StoredToolCall[];
   interrupted?: boolean;
   usage?: { prompt: number; completion: number } | null;
+  /** 用户消息携带的附件快照，模型与页面都靠它拿到编号 */
+  attachments?: ChatAttachmentRef[];
+};
+
+/** 对话附件：上传后先暂存，绑定到待办后打上标记 */
+type ChatAttachmentRow = {
+  id: number;
+  user_id: number;
+  session_id: string | null;
+  kind: "image" | "file";
+  original_name: string;
+  stored_name: string;
+  mime_type: string;
+  size: number;
+  bound_todo_id: number | null;
+  bound_attachment_id: number | null;
+  created_at: string;
+};
+
+/** 消息里保存的附件快照，只留页面展示与模型引用需要的字段 */
+type ChatAttachmentRef = {
+  id: number;
+  name: string;
+  size: number;
+  kind: string;
 };
 
 /** 回填给模型的单个工具结果上限，避免日志类工具把上下文撑爆 */
 const TOOL_CONTENT_LIMIT = 8000;
 /** SSE 心跳间隔，防止长时间工具执行被中间层判为死连接 */
 const SSE_PING_MS = 15_000;
+/** 对话附件暂存目录：绑定到待办时由 todo 模块复制到自己的存储目录 */
+const CHAT_UPLOAD_DIR = path.resolve("./src/output/chat-uploads");
+const CHAT_ATTACH_MAX_FILES = 5;
+const CHAT_ATTACH_MAX_BYTES = 32 * 1024 * 1024;
+/** 未绑定的暂存附件保留天数，过期连文件一起清理 */
+const CHAT_ATTACH_TTL_SQL = "-7 days";
+
+const formatFileSize = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
 
 const SYSTEM_PROMPT = [
   "你是 GitStatus 工作区的助手，可以调用工具读写当前账号的待办、分类、标签、共享关系，以及查看项目与运行日志。",
@@ -79,6 +132,7 @@ const SYSTEM_PROMPT = [
   "4. 回答用中文，简洁直接；涉及多条数据时用列表，不要复述工具的原始输出。",
   "5. 涉及「几小时后」「今天还剩多久」这类相对时间时，先调用 gitstatus_now 拿当前时刻，不要用登录时间或创建时间推算。",
   "6. 你没有启动/停止项目、执行命令的权限，被问到这类请求时说明需要人工在项目管理页操作。",
+  "7. 用户消息带 [本条消息附带的文件] 清单时，如果要把这些文件一起存进待办，把对应编号填进 gitstatus_todo_create 或 gitstatus_todo_update 的 attachmentIds；不要编造编号，也不要把文件内容写进描述。",
 ].join("\n");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -140,6 +194,28 @@ export const registerChatFeature = (
     ON chat_messages(session_id, id)
   `);
 
+  // 对话附件：先落在暂存目录，模型把编号写进工具参数后由宿主绑到待办
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      session_id TEXT,
+      kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('image','file')),
+      original_name TEXT NOT NULL,
+      stored_name TEXT NOT NULL UNIQUE,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      bound_todo_id INTEGER,
+      bound_attachment_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_chat_attachments_session
+    ON chat_attachments(session_id, id)
+  `);
+
   const listSessionsStmt = db.prepare(
     "SELECT * FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 100",
   );
@@ -168,6 +244,55 @@ export const registerChatFeature = (
     "SELECT COUNT(*) as count FROM chat_messages WHERE session_id = ? AND role = 'user'",
   );
 
+  const insertChatAttachmentStmt = db.prepare(
+    `INSERT INTO chat_attachments
+     (user_id, session_id, kind, original_name, stored_name, mime_type, size)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const getChatAttachmentStmt = db.prepare(
+    "SELECT * FROM chat_attachments WHERE id = ? AND user_id = ?",
+  );
+  const claimChatAttachmentStmt = db.prepare(
+    "UPDATE chat_attachments SET session_id = ? WHERE id = ? AND user_id = ? AND bound_todo_id IS NULL",
+  );
+  const markChatAttachmentBoundStmt = db.prepare(
+    "UPDATE chat_attachments SET bound_todo_id = ?, bound_attachment_id = ? WHERE id = ? AND user_id = ?",
+  );
+  const deleteChatAttachmentStmt = db.prepare(
+    "DELETE FROM chat_attachments WHERE id = ? AND user_id = ?",
+  );
+  const listSessionAttachmentsStmt = db.prepare(
+    "SELECT * FROM chat_attachments WHERE session_id = ? AND user_id = ?",
+  );
+  const listPendingAttachmentsStmt = db.prepare(
+    `SELECT * FROM chat_attachments
+     WHERE session_id = ? AND user_id = ? AND bound_todo_id IS NULL ORDER BY id ASC`,
+  );
+  const listStaleAttachmentsStmt = db.prepare(
+    `SELECT * FROM chat_attachments
+     WHERE bound_todo_id IS NULL AND created_at < datetime('now','localtime', ?)`,
+  );
+
+  /** 删除暂存目录里的物理文件；已绑定或已清理时忽略 */
+  const removeAttachmentFile = (row: ChatAttachmentRow): void => {
+    try {
+      fs.unlinkSync(path.join(CHAT_UPLOAD_DIR, String(row.user_id), row.stored_name));
+    } catch {
+      /* 文件不存在或暂时被占用，留给下次清理 */
+    }
+  };
+
+  /** 启动时清一次过期的未绑定暂存附件，避免目录无限增长 */
+  const cleanupStaleAttachments = (): void => {
+    const rows = listStaleAttachmentsStmt.all(CHAT_ATTACH_TTL_SQL) as ChatAttachmentRow[];
+    for (const row of rows) {
+      removeAttachmentFile(row);
+      deleteChatAttachmentStmt.run(row.id, row.user_id);
+    }
+    if (rows.length > 0) logInfo(`[chat] cleaned ${rows.length} stale attachment(s)`);
+  };
+  cleanupStaleAttachments();
+
   // 工具定义与 MCP 服务共用，按角色过滤后再交给模型
   const registry = new ToolRegistry();
   registry.add(...allTools);
@@ -181,6 +306,34 @@ export const registerChatFeature = (
         parameters: tool.parameters,
       },
     }));
+
+  /** 消息 payload 解析；格式异常时退化成空对象 */
+  const parseMessagePayload = (raw: string): MessagePayload => {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return isRecord(parsed) ? (parsed as MessagePayload) : {};
+    } catch {
+      return {};
+    }
+  };
+
+  /**
+   * 把附件清单拼进用户消息。
+   * 模型看不到文件内容，唯一能引用附件的方式就是文本里这个编号，
+   * 所以每条带附件的消息都要在上下文里保留一段清单。
+   */
+  const renderUserContent = (content: string, attachments: ChatAttachmentRef[]): string => {
+    if (attachments.length === 0) return content;
+    const lines = attachments.map(
+      (item) => `- #${item.id} ${item.name}（${formatFileSize(Number(item.size) || 0)}）`,
+    );
+    return [
+      content,
+      "",
+      "[本条消息附带的文件。需要随待办一起保存时，把编号填进 attachmentIds]\n",
+      ...lines,
+    ].join("\n");
+  };
 
   /** 用已落库的消息重建 OpenAI 上下文 */
   const buildMessages = (sessionId: string): Array<Record<string, unknown>> => {
@@ -196,7 +349,9 @@ export const registerChatFeature = (
 
     for (const row of rows) {
       if (row.role === "user") {
-        messages.push({ role: "user", content: row.content });
+        const payload = parseMessagePayload(row.payload);
+        const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+        messages.push({ role: "user", content: renderUserContent(row.content, attachments) });
         continue;
       }
       if (row.role !== "assistant") continue;
@@ -364,6 +519,111 @@ export const registerChatFeature = (
   const chatRouter = express.Router();
   chatRouter.use(authMiddleware);
 
+  const chatUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: CHAT_ATTACH_MAX_BYTES, files: CHAT_ATTACH_MAX_FILES },
+  });
+
+  /**
+   * 上传对话附件。
+   * 只落到暂存区并返回编号，此时还不属于任何待办；
+   * 真正绑定发生在模型调用 gitstatus_todo_create/update 时。
+   */
+  chatRouter.post("/attachments", (req, res) => {
+    chatUpload.array("files", CHAT_ATTACH_MAX_FILES)(req, res, (error: unknown) => {
+      if (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(400).json({ res: false, message });
+        return;
+      }
+      try {
+        const user = (req as express.Request & { user?: { userId: number } }).user;
+        const userId = user?.userId ?? 0;
+        if (!userId) {
+          res.status(401).json({ res: false, message: "请先登录" });
+          return;
+        }
+        const files = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
+        if (files.length === 0) {
+          res.status(400).json({ res: false, message: "至少需要一个文件" });
+          return;
+        }
+        const sessionIdRaw = String((req.body as { sessionId?: unknown })?.sessionId ?? "").trim();
+        if (sessionIdRaw && !getSessionStmt.get(sessionIdRaw, userId)) {
+          res.status(404).json({ res: false, message: "session not found" });
+          return;
+        }
+
+        // 先整体校验再落盘，避免部分文件写进去后才发现超限
+        const prepared = files.map((file) => {
+          const name =
+            sanitizeUploadFileName(decodeUploadFileName(file.originalname || "")) || "attachment";
+          const mime = String(file.mimetype || "").toLowerCase();
+          if (BLOCKED_FILE_EXTENSIONS.has(path.extname(name).toLowerCase())) {
+            throw new Error(`不支持的文件类型：${name}`);
+          }
+          if (mime.startsWith("image/") && file.size > MAX_IMAGE_BYTES) {
+            throw new Error(`图片 ${name} 超过 8 MB`);
+          }
+          return { file, name, mime };
+        });
+
+        const userDir = path.join(CHAT_UPLOAD_DIR, String(userId));
+        fs.mkdirSync(userDir, { recursive: true });
+
+        const attachments: ChatAttachmentRef[] = [];
+        for (const item of prepared) {
+          const kind = attachmentKindOf(item.mime);
+          const storedName = `${crypto.randomUUID()}${safeFileExtension(item.name, item.mime)}`;
+          fs.writeFileSync(path.join(userDir, storedName), item.file.buffer);
+          const info = insertChatAttachmentStmt.run(
+            userId,
+            sessionIdRaw || null,
+            kind,
+            item.name,
+            storedName,
+            item.mime,
+            item.file.size,
+          );
+          attachments.push({
+            id: Number(info.lastInsertRowid),
+            name: item.name,
+            size: item.file.size,
+            kind,
+          });
+        }
+
+        res.status(201).json({ res: true, attachments });
+      } catch (uploadError) {
+        const message = uploadError instanceof Error ? uploadError.message : String(uploadError);
+        res.status(400).json({ res: false, message });
+      }
+    });
+  });
+
+  /** 删除尚未绑定到待办的对话附件 */
+  chatRouter.delete("/attachments/:id", (req, res) => {
+    const user = (req as express.Request & { user?: { userId: number } }).user;
+    const userId = user?.userId ?? 0;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ res: false, message: "invalid attachment id" });
+      return;
+    }
+    const row = getChatAttachmentStmt.get(id, userId) as ChatAttachmentRow | undefined;
+    if (!row) {
+      res.status(404).json({ res: false, message: "attachment not found" });
+      return;
+    }
+    if (row.bound_todo_id !== null) {
+      res.status(409).json({ res: false, message: "附件已绑定到待办，请到待办页面删除" });
+      return;
+    }
+    removeAttachmentFile(row);
+    deleteChatAttachmentStmt.run(id, userId);
+    res.json({ res: true, message: "deleted" });
+  });
+
   /** 当前用户在这次请求里用来调自己后端接口的凭据 */
   const tokenOf = (req: express.Request): string => {
     const header = String(req.headers.authorization || "");
@@ -511,11 +771,20 @@ export const registerChatFeature = (
 
   chatRouter.delete("/sessions/:id", (req, res) => {
     const user = (req as express.Request & { user?: { userId: number } }).user;
-    const info = deleteSessionStmt.run(String(req.params.id), user?.userId ?? 0);
-    if (info.changes === 0) {
+    const userId = user?.userId ?? 0;
+    const sessionId = String(req.params.id);
+    const session = getSessionStmt.get(sessionId, userId) as ChatSessionRow | undefined;
+    if (!session) {
       res.status(404).json({ res: false, message: "session not found" });
       return;
     }
+    // 未绑定的暂存文件随会话删除；已绑定的副本在待办目录里，不受影响
+    const rows = listSessionAttachmentsStmt.all(sessionId, userId) as ChatAttachmentRow[];
+    for (const row of rows) {
+      if (row.bound_todo_id === null) removeAttachmentFile(row);
+      deleteChatAttachmentStmt.run(row.id, userId);
+    }
+    deleteSessionStmt.run(sessionId, userId);
     res.json({ res: true, message: "deleted" });
   });
 
@@ -533,19 +802,15 @@ export const registerChatFeature = (
       res: true,
       session: { id: session.id, title: session.title, model: session.model },
       messages: rows.map((row) => {
-        let payload: MessagePayload = {};
-        try {
-          const parsed = JSON.parse(row.payload) as unknown;
-          if (isRecord(parsed)) payload = parsed as MessagePayload;
-        } catch {
-          payload = {};
-        }
+        const payload = parseMessagePayload(row.payload);
         return {
           id: row.id,
           role: row.role,
           content: row.content,
           toolCalls: payload.toolCalls ?? [],
           interrupted: payload.interrupted ?? false,
+          // 用户消息的附件快照，用于刷新后仍然展示原文件名与大小
+          attachments: payload.attachments ?? [],
           createdAt: row.created_at,
         };
       }),
@@ -558,9 +823,15 @@ export const registerChatFeature = (
     const userId = user?.userId ?? 0;
     const role: UserRole = user?.role ?? "readonly";
     const sessionId = String(req.params.id);
-    const content = String((req.body as { content?: unknown })?.content ?? "").trim();
+    const body = (req.body ?? {}) as { content?: unknown; attachmentIds?: unknown };
+    const content = String(body.content ?? "").trim();
+    const requestedIds = Array.isArray(body.attachmentIds)
+      ? [...new Set(body.attachmentIds.map((item) => Number(item)))]
+          .filter((id) => Number.isInteger(id) && id > 0)
+      : [];
 
-    if (!content) {
+    // 允许只发附件不发文字：拖完文件直接回车也能提交
+    if (!content && requestedIds.length === 0) {
       res.status(400).json({ res: false, message: "content is required" });
       return;
     }
@@ -573,6 +844,24 @@ export const registerChatFeature = (
       res.status(404).json({ res: false, message: "session not found" });
       return;
     }
+
+    // 附件必须是本人的、未绑定的；绑定过的不能再重复使用
+    const attachmentRows: ChatAttachmentRow[] = [];
+    for (const id of requestedIds) {
+      const row = getChatAttachmentStmt.get(id, userId) as ChatAttachmentRow | undefined;
+      if (!row || row.bound_todo_id !== null) {
+        res.status(400).json({ res: false, message: `附件 #${id} 不可用或已经绑定到待办` });
+        return;
+      }
+      attachmentRows.push(row);
+    }
+    const attachmentRefs: ChatAttachmentRef[] = attachmentRows.map((row) => ({
+      id: row.id,
+      name: row.original_name,
+      size: row.size,
+      kind: row.kind,
+    }));
+
     const config = llmStore.resolve();
     if (!config) {
       res.status(400).json({
@@ -583,10 +872,20 @@ export const registerChatFeature = (
     }
 
     // 先落用户消息：即使后面中断，也能看到自己发了什么
-    insertMessageStmt.run(sessionId, "user", content, "{}");
+    const storedContent =
+      content || `（附件：${attachmentRefs.map((item) => item.name).join("、")}）`;
+    for (const row of attachmentRows) claimChatAttachmentStmt.run(sessionId, row.id, userId);
+    insertMessageStmt.run(
+      sessionId,
+      "user",
+      storedContent,
+      JSON.stringify({ attachments: attachmentRefs } satisfies MessagePayload),
+    );
     const isFirstMessage = (countUserMessagesStmt.get(sessionId) as { count: number }).count <= 1;
     if (isFirstMessage) {
-      const title = content.slice(0, 24).replace(/\s+/g, " ");
+      const title = (content || attachmentRefs[0]?.name || "新对话")
+        .slice(0, 24)
+        .replace(/\s+/g, " ");
       renameSessionStmt.run(title, sessionId, userId);
     }
     touchSessionStmt.run(sessionId);
@@ -617,7 +916,78 @@ export const registerChatFeature = (
       apiKey: tokenOf(req),
       timeoutMs: 30_000,
     });
-    const toolContext: ToolContext = { api, role };
+
+    // 本会话还没绑到待办的附件，模型只能引用这些编号
+    const pendingRows = listPendingAttachmentsStmt.all(sessionId, userId) as ChatAttachmentRow[];
+    const attachmentBridge: ChatAttachmentBridge = {
+      availableIds: pendingRows.map((row) => row.id),
+      async bind(todoId, ids) {
+        const results: Array<{ id: number; name: string; ok: boolean; message: string }> = [];
+        for (const id of ids) {
+          const row = getChatAttachmentStmt.get(id, userId) as ChatAttachmentRow | undefined;
+          if (!row) {
+            results.push({ id, name: `#${id}`, ok: false, message: "附件不存在" });
+            continue;
+          }
+          if (row.bound_todo_id !== null) {
+            results.push({
+              id,
+              name: row.original_name,
+              ok: false,
+              message: "该附件已经绑定到其他待办",
+            });
+            continue;
+          }
+          if (row.session_id !== sessionId) {
+            results.push({
+              id,
+              name: row.original_name,
+              ok: false,
+              message: "该附件不属于当前会话",
+            });
+            continue;
+          }
+
+          // 走 todo 自己的附件接口：限额、kind 判定、文件落盘都由那一侧负责，
+          // 这里只把暂存文件重新包成 multipart
+          try {
+            const buffer = fs.readFileSync(
+              path.join(CHAT_UPLOAD_DIR, String(userId), row.stored_name),
+            );
+            const form = new FormData();
+            form.append(
+              "files",
+              new Blob([buffer], { type: row.mime_type || "application/octet-stream" }),
+              row.original_name,
+            );
+            const payload = await api.postForm(`/todos/${todoId}/attachments`, form);
+            const created = isRecord(payload) ? payload.attachments : null;
+            const first = Array.isArray(created) ? created[0] : null;
+            const attachmentId = isRecord(first) ? Number(first.id) : NaN;
+            markChatAttachmentBoundStmt.run(
+              todoId,
+              Number.isFinite(attachmentId) ? attachmentId : null,
+              id,
+              userId,
+            );
+            // 待办目录已有副本，暂存文件不再需要
+            removeAttachmentFile(row);
+            results.push({
+              id,
+              name: row.original_name,
+              ok: true,
+              message: `已加入待办 #${todoId}`,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            results.push({ id, name: row.original_name, ok: false, message });
+          }
+        }
+        return results;
+      },
+    };
+
+    const toolContext: ToolContext = { api, role, attachments: attachmentBridge };
     const tools = buildOpenAiTools(role);
     const messages = buildMessages(sessionId);
 

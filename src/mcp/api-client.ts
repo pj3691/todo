@@ -33,6 +33,8 @@ export interface ApiClient {
   put(path: string, body?: unknown): Promise<unknown>;
   patch(path: string, body?: unknown): Promise<unknown>;
   del(path: string, query?: Record<string, unknown>): Promise<unknown>;
+  /** multipart 上传：内置助手把对话附件转投到待办附件接口时使用 */
+  postForm(path: string, form: FormData): Promise<unknown>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -85,6 +87,23 @@ export const createApiClient = (options: ApiClientOptions): ApiClient => {
     return url.toString();
   };
 
+  /** 统一的响应处理：HTTP 状态与 res:false 都翻译成 ApiError */
+  const readResponse = async (response: Response): Promise<unknown> => {
+    const payload = parseBody(await response.text());
+
+    if (!response.ok) {
+      throw new ApiError(
+        messageOf(payload) || `HTTP ${response.status}`,
+        response.status,
+      );
+    }
+    // 部分接口 200 但仍以 res:false 表达失败
+    if (isRecord(payload) && payload.res === false) {
+      throw new ApiError(messageOf(payload) || "请求被后端拒绝", response.status);
+    }
+    return payload;
+  };
+
   const request = async (
     method: string,
     path: string,
@@ -112,19 +131,30 @@ export const createApiClient = (options: ApiClientOptions): ApiClient => {
       );
     }
 
-    const payload = parseBody(await response.text());
+    return readResponse(response);
+  };
 
-    if (!response.ok) {
+  /** multipart 请求：不设置 Content-Type，交给 fetch 生成 boundary */
+  const requestForm = async (path: string, form: FormData): Promise<unknown> => {
+    let response: Response;
+    try {
+      response = await fetch(buildUrl(path), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${options.apiKey}`,
+          Accept: "application/json",
+        },
+        body: form,
+        signal: AbortSignal.timeout(options.timeoutMs),
+      });
+    } catch (error) {
       throw new ApiError(
-        messageOf(payload) || `HTTP ${response.status}`,
-        response.status,
+        `无法连接 GitStatus 后端 ${base}：${describeError(error)}`,
+        0,
       );
     }
-    // 部分接口 200 但仍以 res:false 表达失败
-    if (isRecord(payload) && payload.res === false) {
-      throw new ApiError(messageOf(payload) || "请求被后端拒绝", response.status);
-    }
-    return payload;
+
+    return readResponse(response);
   };
 
   return {
@@ -134,5 +164,6 @@ export const createApiClient = (options: ApiClientOptions): ApiClient => {
     put: (path, body) => request("PUT", path, undefined, body ?? {}),
     patch: (path, body) => request("PATCH", path, undefined, body ?? {}),
     del: (path, query) => request("DELETE", path, query, undefined),
+    postForm: (path, form) => requestForm(path, form),
   };
 };

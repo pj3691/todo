@@ -25,10 +25,30 @@ export const ROLE_LEVEL: Record<UserRole, number> = {
 export const hasRoleLevel = (role: UserRole, min: UserRole): boolean =>
   ROLE_LEVEL[role] >= ROLE_LEVEL[min];
 
+/**
+ * 对话附件能力。
+ *
+ * 附件是二进制，不可能塞进工具参数里由模型“转述”；
+ * 因此由内置助手在发起本轮对话时注入一个桥：模型只传编号，
+ * 真正读文件、转投到待办附件接口的动作由宿主实现。
+ * MCP 调用方没有这个字段，传 attachmentIds 会得到明确报错。
+ */
+export interface ChatAttachmentBridge {
+  /** 本会话尚未绑定到待办的附件 id，模型只能引用这些编号 */
+  availableIds: number[];
+  /** 把附件绑定到指定待办，逐条返回结果 */
+  bind(
+    todoId: number,
+    ids: number[],
+  ): Promise<Array<{ id: number; name: string; ok: boolean; message: string }>>;
+}
+
 export interface ToolContext {
   api: ApiClient;
   /** 当前密钥所属账号的角色 */
   role: UserRole;
+  /** 仅在「AI 助手」页的对话中提供 */
+  attachments?: ChatAttachmentBridge;
 }
 
 export interface ToolOutcome {
