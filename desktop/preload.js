@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("desktopApi", {
     // 通用动作
     openTodo: (add) => ipcRenderer.send("app:open-todo", Boolean(add)),
     openTodoAdd: () => ipcRenderer.send("app:open-todo-add"),
+    // 独立对话窗口：双击桌宠或菜单里打开
+    openChat: () => ipcRenderer.send("app:open-chat"),
     openSettings: () => ipcRenderer.send("app:open-settings"),
     openLogin: () => ipcRenderer.send("app:open-login"),
     hidePet: () => ipcRenderer.send("app:hide-pet"),
@@ -69,5 +71,19 @@ contextBridge.exposeInMainWorld("desktopApi", {
     moveToDisplay: (displayId) => ipcRenderer.send("settings:move-display", Number(displayId)),
     closeSettings: () => ipcRenderer.send("settings:close"),
     resizeSettings: (width, height) =>
-        ipcRenderer.send("settings:resize", { width: Number(width), height: Number(height) })
+        ipcRenderer.send("settings:resize", { width: Number(width), height: Number(height) }),
+
+    // AI 助手浮窗：数据都经主进程代理，页面不直接访问后端
+    chatGetState: () => ipcRenderer.invoke("chat:get-state"),
+    chatCreateSession: () => ipcRenderer.invoke("chat:create"),
+    chatMessages: (id) => ipcRenderer.invoke("chat:messages", String(id || "")),
+    chatDeleteSession: (id) => ipcRenderer.invoke("chat:delete", String(id || "")),
+    chatSend: (payload) => ipcRenderer.invoke("chat:send", payload || {}),
+    chatStop: () => ipcRenderer.send("chat:stop"),
+    chatPickAttachment: () => ipcRenderer.invoke("chat:pick-attachment"),
+    chatRemoveAttachment: (id) => ipcRenderer.invoke("chat:remove-attachment", Number(id)),
+    chatClose: () => ipcRenderer.send("chat:close"),
+    chatOpenWeb: () => ipcRenderer.send("chat:open-web"),
+    onChatStream: (callback) => subscribe("chat:stream", callback),
+    onChatShown: (callback) => subscribe("chat:shown", callback)
 });

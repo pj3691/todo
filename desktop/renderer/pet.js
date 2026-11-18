@@ -99,7 +99,8 @@
                 global.clearTimeout(clickTimer);
                 clickTimer = 0;
             }
-            api.togglePanel();
+            // 双击打开独立的 AI 对话窗口；完整面板仍可通过侧边菜单按钮打开
+            api.openChat();
             return;
         }
         lastClickAt = now;

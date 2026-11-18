@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitStatus AI 助手</title>
+    <link rel="stylesheet" href="chat.css">
+</head>
+
+<body>
+    <div class="chat-card" id="card">
+        <header class="chat-head">
+            <div class="chat-head-copy">
+                <span class="kicker">AI 助手</span>
+                <h1 id="sessionTitle">新对话</h1>
+            </div>
+            <div class="chat-head-actions">
+                <button class="head-btn" id="newBtn" type="button" title="新对话" aria-label="新对话">+</button>
+                <button class="head-btn" id="webBtn" type="button" title="在浏览器中打开完整页面" aria-label="在浏览器中打开完整页面">↗</button>
+                <button class="head-btn" id="closeBtn" type="button" title="关闭" aria-label="关闭">×</button>
+            </div>
+        </header>
+
+        <div class="chat-toolbar">
+            <select id="sessionSelect" aria-label="历史会话"></select>
+            <button class="tool-btn" id="deleteBtn" type="button" title="删除当前会话">删除</button>
+        </div>
+
+        <div class="chat-notice hidden" id="notice"></div>
+
+        <div class="chat-messages" id="messages"></div>
+
+        <div class="chat-empty" id="empty">
+            <strong>可以问点什么</strong>
+            <ul>
+                <li data-prompt="今天还有哪些待办没完成？">今天还有哪些待办没完成？</li>
+                <li data-prompt="帮我建一条明天下午三点的待办，标题是「复核定稿」">帮我建一条明天下午三点的待办</li>
+                <li data-prompt="最近有哪些项目在运行？">最近有哪些项目在运行？</li>
+            </ul>
+        </div>
+
+        <div class="chat-attach-list hidden" id="attachList"></div>
+
+        <div class="chat-composer">
+            <button class="icon-btn" id="attachBtn" type="button" title="添加附件" aria-label="添加附件">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                </svg>
+            </button>
+            <textarea id="input" rows="1" placeholder="问我点什么，Enter 发送" autocomplete="off"></textarea>
+            <button class="send-btn" id="sendBtn" type="button">发送</button>
+            <button class="stop-btn hidden" id="stopBtn" type="button">停止</button>
+        </div>
+
+        <div class="chat-foot" id="foot">正在读取配置…</div>
+    </div>
+
+    <script src="vendor/marked.umd.js"></script>
+    <script src="vendor/purify.min.js"></script>
+    <script src="chat.js"></script>
+</body>
+
+</html>

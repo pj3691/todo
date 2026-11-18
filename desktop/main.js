@@ -40,6 +40,9 @@ const BUBBLE_PADDING = 16;
 const PANEL_WIDTH = 322;
 const MINI_WIDTH = 200;
 const SETTINGS_WIDTH = 384;
+// 对话浮窗：比设置窗宽一点，高度吃完工作区剩余空间
+const CHAT_WIDTH = 400;
+const CHAT_MAX_HEIGHT = 560;
 
 const POLL_MS = 25000;
 const TICK_MS = 15000;
@@ -180,6 +183,7 @@ function killBackendProcessTree() {
 }
 const loginUrl = `${serverUrl}/pages/desktop-login.html`;
 const todoUrl = `${serverUrl}/pages/todo.html`;
+const chatUrl = `${serverUrl}/pages/chat.html`;
 
 const userDataDir = app.getPath("userData");
 const files = {
@@ -242,6 +246,7 @@ let bubbleWin = null;
 let settingsWin = null;
 let loginWin = null;
 let todoWin = null;
+let chatWin = null;
 let tray = null;
 
 let petHidden = false;
@@ -280,6 +285,9 @@ let bubbleShowTimer = null;
 let bubbleReady = false;
 let bubbleSize = { width: 0, height: 0 };
 let settingsSize = { width: 0, height: 0 };
+let chatSize = { width: 0, height: 0 };
+// 当前正在跑的对话请求；关窗或点停止时 abort
+let chatAbort = null;
 let noticeQueue = [];
 const snoozeTimers = new Set();
 
@@ -658,6 +666,7 @@ function createPetWindow() {
         applyHoverIgnore(true);
         keepPetOnTop();
         repositionSettingsIfVisible();
+        repositionChatIfVisible();
         if (welcomeOnReady) {
             welcomeOnReady = false;
             setTimeout(() => showMiniNotice("welcome"), 120);
@@ -773,6 +782,7 @@ function movePetToDisplay(displayId) {
     updateTrayMenu();
     repositionBubbleIfVisible();
     repositionSettingsIfVisible();
+    repositionChatIfVisible();
 }
 
 function saveDisplayStateFromBounds(bounds) {
@@ -814,6 +824,7 @@ function handleDisplaysChanged() {
     updateTrayMenu();
     repositionBubbleIfVisible();
     repositionSettingsIfVisible();
+    repositionChatIfVisible();
 }
 
 function resizePetForSize() {
@@ -839,6 +850,7 @@ function resizePetForSize() {
     updateFlip(true);
     repositionBubbleIfVisible();
     repositionSettingsIfVisible();
+    repositionChatIfVisible();
 }
 
 // ---------- 拖动 ----------
@@ -854,6 +866,7 @@ function startPetDrag(offsetX, offsetY) {
     applyHoverIgnore(false);
     hideBubble({ silent: true });
     closeSettingsWindow();
+    closeChatWindow();
 }
 
 function movePetDragFrame() {
@@ -885,6 +898,7 @@ function endPetDrag() {
     updateTrayMenu();
     keepPetOnTop();
     repositionSettingsIfVisible();
+    repositionChatIfVisible();
     setTimeout(maybeShowNextReminder, 300);
 }
 
@@ -1344,6 +1358,7 @@ function showPet() {
     keepPetOnTop();
     setTimeout(keepPetOnTop, 30);
     repositionSettingsIfVisible();
+    repositionChatIfVisible();
     sendTo(petWin, "app:state", buildStatePayload());
     sendTo(petWin, "pet:alert", false);
     showMiniNotice("welcome");
@@ -1460,7 +1475,339 @@ function openTodoWindow(add, forceReload) {
     });
 }
 
+function openChatWindow() {
+    closeSettingsWindow();
+    if (chatWin && !chatWin.isDestroyed()) {
+        applyChatBounds();
+        if (chatWin.isVisible()) {
+            chatWin.focus();
+            chatWin.moveTop();
+        } else {
+            showFloatingWindow(chatWin, { focus: true });
+            sendTo(chatWin, "chat:shown", true);
+        }
+        return;
+    }
+    hideBubble({ silent: true });
+    const width = CHAT_WIDTH + BUBBLE_PADDING * 2;
+    const cardHeight = Math.min(CHAT_MAX_HEIGHT, getSelectedDisplay().workArea.height - 24);
+    chatSize = { width, height: cardHeight + BUBBLE_PADDING * 2 };
+    chatWin = new BrowserWindow({
+        width,
+        height: chatSize.height,
+        show: false,
+        frame: false,
+        transparent: true,
+        backgroundColor: "#00000000",
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        hasShadow: false,
+        thickFrame: false,
+        focusable: true,
+        title: "GitStatus AI 助手",
+        icon: trayIconPath,
+        webPreferences: {
+            preload: preloadPath,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true
+        }
+    });
+    chatWin.setMenuBarVisibility(false);
+    chatWin.setBackgroundColor("#00000000");
+    chatWin.setHasShadow(false);
+    chatWin.setAlwaysOnTop(true, "screen-saver");
+    if (process.env.PET_DEBUG === "1") {
+        chatWin.webContents.on("console-message", (_event, _level, message) => {
+            debugLog("chat-renderer", message);
+        });
+    }
+    // 等页面首帧画完再贴到桌宠旁，避免先闪一下旧位置
+    chatWin.once("ready-to-show", () => {
+        setTimeout(() => {
+            if (!chatWin || chatWin.isDestroyed() || chatWin.isVisible()) return;
+            applyChatBounds();
+            showFloatingWindow(chatWin, { focus: true });
+            sendTo(chatWin, "chat:shown", true);
+        }, 60);
+    });
+    void chatWin.loadFile(path.join(rendererDir, "chat.html"));
+    chatWin.on("closed", () => {
+        if (chatAbort) {
+            chatAbort.abort();
+            chatAbort = null;
+        }
+        chatWin = null;
+        chatSize = { width: 0, height: 0 };
+        maybeShowNextReminder();
+    });
+}
+
+function applyChatBounds() {
+    if (!chatWin || chatWin.isDestroyed()) return;
+    if (!chatSize.width || !chatSize.height) return;
+    let bounds = computeFloatingBounds(
+        "panel",
+        chatSize.width - BUBBLE_PADDING * 2,
+        chatSize.height - BUBBLE_PADDING * 2
+    );
+    if (!bounds) {
+        // 桌宠隐藏时从托盘打开：先贴到当前显示器右上角
+        const area = getSelectedDisplay().workArea;
+        bounds = {
+            x: area.x + area.width - chatSize.width - 20,
+            y: area.y + 20,
+            width: chatSize.width,
+            height: chatSize.height
+        };
+    }
+    chatWin.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+}
+
+function closeChatWindow() {
+    if (chatWin && !chatWin.isDestroyed()) {
+        try {
+            chatWin.close();
+        } catch {
+            /* 已销毁时忽略 */
+        }
+    }
+    chatWin = null;
+    chatSize = { width: 0, height: 0 };
+}
+
+function repositionChatIfVisible() {
+    if (!chatWin || chatWin.isDestroyed() || !chatWin.isVisible()) return;
+    applyChatBounds();
+}
+
+// ---------- AI 助手浮窗数据 ----------
+/**
+ * 对话接口全部由主进程代理：浮窗是 file:// 页面，直接跨域调不到后端，
+ * 且登录 token 只保存在主进程（网页版的 localStorage 与它不互通）。
+ */
+const CHAT_API = `${serverUrl}/gitstatus/api/chat`;
+const MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".avif": "image/avif",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".zip": "application/zip",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+};
+
+const guessMime = (fileName) =>
+    MIME_BY_EXT[path.extname(String(fileName || "")).toLowerCase()] || "application/octet-stream";
+
+/** 发一个 JSON 请求给对话接口；网络错误也归一成返回值，不抛异常 */
+async function chatRequest(method, route, body) {
+    const headers = { Accept: "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    let response;
+    try {
+        response = await fetch(`${CHAT_API}${route}`, {
+            method,
+            headers,
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            signal: AbortSignal.timeout(30000)
+        });
+    } catch {
+        return { ok: false, status: 0, json: null, networkError: true, message: "后台还没有启动喵" };
+    }
+    let json = null;
+    try {
+        json = await response.json();
+    } catch {
+        json = null;
+    }
+    return {
+        ok: response.ok && (!json || json.res !== false),
+        status: response.status,
+        json,
+        networkError: false,
+        message: json && typeof json.message === "string" ? json.message : ""
+    };
+}
+
+/** 浮窗首屏数据：会话列表 + 模型配置状态 */
+async function chatStatePayload() {
+    const [sessions, llm] = await Promise.all([
+        chatRequest("GET", "/sessions"),
+        chatRequest("GET", "/llm")
+    ]);
+    return {
+        loggedIn: Boolean(token),
+        serverUrl,
+        offline: Boolean(sessions.networkError),
+        message: sessions.message || "",
+        sessions: sessions.ok && sessions.json ? sessions.json.sessions || [] : [],
+        llm: llm.ok && llm.json ? llm.json.llm || null : null
+    };
+}
+
+/** 发一条消息并逐条转发 SSE；返回后窗口已经收到 done / error */
+async function chatSendStream(sessionId, content, attachmentIds) {
+    if (!token) return { ok: false, message: "请先登录" };
+    if (chatAbort) chatAbort.abort();
+    const controller = new AbortController();
+    chatAbort = controller;
+    const target = chatWin;
+
+    try {
+        const response = await fetch(
+            `${CHAT_API}/sessions/${encodeURIComponent(sessionId)}/messages`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "text/event-stream",
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ content, attachmentIds }),
+                signal: controller.signal
+            }
+        );
+
+        if (!response.ok || !response.body) {
+            let message = `请求失败（${response.status}）`;
+            try {
+                const json = await response.json();
+                if (json && typeof json.message === "string") message = json.message;
+            } catch {
+                /* 非 JSON 响应 */
+            }
+            sendTo(target, "chat:stream", { event: "error", data: { message } });
+            return { ok: false, message };
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventName = "";
+        let dataLines = [];
+
+        const flush = () => {
+            if (dataLines.length === 0) return;
+            const raw = dataLines.join("\n");
+            dataLines = [];
+            const name = eventName || "message";
+            eventName = "";
+            let data = null;
+            try {
+                data = JSON.parse(raw);
+            } catch {
+                data = null;
+            }
+            if (data !== null) sendTo(target, "chat:stream", { event: name, data });
+        };
+
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let index = buffer.indexOf("\n");
+            while (index >= 0) {
+                const line = buffer.slice(0, index).replace(/\r$/, "");
+                buffer = buffer.slice(index + 1);
+                if (line === "") flush();
+                else if (line.startsWith(":")) {
+                    /* 心跳 */
+                } else if (line.startsWith("event:")) eventName = line.slice(6).trim();
+                else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+                index = buffer.indexOf("\n");
+            }
+        }
+        flush();
+        return { ok: true };
+    } catch (error) {
+        const aborted = controller.signal.aborted;
+        if (!aborted) {
+            sendTo(target, "chat:stream", {
+                event: "error",
+                data: { message: error instanceof Error ? error.message : String(error) }
+            });
+        }
+        return { ok: false, aborted };
+    } finally {
+        if (chatAbort === controller) chatAbort = null;
+    }
+}
+
+/** 选文件并上传到对话暂存区 */
+async function chatPickAttachments() {
+    if (!token) return { ok: false, message: "请先登录" };
+    const owner = chatWin && !chatWin.isDestroyed() ? chatWin : undefined;
+    const options = {
+        title: "选择附件",
+        properties: ["openFile", "multiSelections"]
+    };
+    // 有父窗口时挂上去，模态感更自然；没有则退化成无主对话框
+    const result = owner
+        ? await dialog.showOpenDialog(owner, options)
+        : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return { ok: true, attachments: [] };
+
+    const form = new FormData();
+    let count = 0;
+    for (const filePath of result.filePaths.slice(0, 5)) {
+        try {
+            const buffer = fs.readFileSync(filePath);
+            const name = path.basename(filePath);
+            form.append("files", new Blob([buffer], { type: guessMime(name) }), name);
+            count += 1;
+        } catch {
+            /* 读不到就跳过这个文件 */
+        }
+    }
+    if (count === 0) return { ok: false, message: "没有可上传的文件" };
+
+    let response;
+    try {
+        response = await fetch(`${CHAT_API}/attachments`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+            signal: AbortSignal.timeout(60000)
+        });
+    } catch {
+        return { ok: false, message: "后台还没有启动喵" };
+    }
+    let json = null;
+    try {
+        json = await response.json();
+    } catch {
+        json = null;
+    }
+    if (!response.ok || !json || json.res === false) {
+        return { ok: false, message: (json && json.message) || `上传失败（${response.status}）` };
+    }
+    return { ok: true, attachments: Array.isArray(json.attachments) ? json.attachments : [] };
+}
+
+async function chatRemoveAttachment(id) {
+    const result = await chatRequest("DELETE", `/attachments/${Number(id)}`);
+    return { ok: result.ok, message: result.message };
+}
+
 function openSettingsWindow() {
+    closeChatWindow();
     if (settingsWin && !settingsWin.isDestroyed()) {
         applySettingsBounds();
         if (settingsWin.isVisible()) {
@@ -1668,6 +2015,7 @@ function updateTrayMenu() {
               ]
             : []),
         { label: "打开待办", click: () => openTodoWindow(false) },
+        { label: "AI 助手", click: () => openChatWindow() },
         { label: "桌宠设置", click: () => openSettingsWindow() },
         ...(token ? [] : [{ label: "登录 GitStatus", click: () => openLoginWindow() }]),
         { label: offline ? "启动后台（未运行）" : "启动后台", click: () => void runBackendAction("start") },
@@ -2005,6 +2353,7 @@ function showPetContextMenu() {
         { label: "查看今日待办", click: () => showPanel() },
         { label: "打开待办", click: () => openTodoWindow(false) },
         { label: "新建待办", click: () => openTodoWindow(true) },
+        { label: "AI 助手", click: () => openChatWindow() },
         { label: "桌宠设置", click: () => openSettingsWindow() },
         { type: "separator" },
         { label: "隐藏桌宠", click: () => hidePet() },
@@ -2018,7 +2367,9 @@ function senderIs(event, win) {
 }
 
 function senderIsApp(event) {
-    return [petWin, bubbleWin, settingsWin, loginWin, todoWin].some((win) => senderIs(event, win));
+    return [petWin, bubbleWin, settingsWin, loginWin, todoWin, chatWin].some((win) =>
+        senderIs(event, win)
+    );
 }
 
 function bubbleAutoHideMs(type) {
@@ -2097,6 +2448,56 @@ function registerIpc() {
     ipcMain.on("app:open-todo-add", (event) => {
         if (!senderIsApp(event)) return;
         openTodoWindow(true);
+    });
+    ipcMain.on("app:open-chat", (event) => {
+        if (!senderIsApp(event)) return;
+        openChatWindow();
+    });
+
+    // AI 助手浮窗：数据代理与流式转发
+    ipcMain.handle("chat:get-state", (event) => (senderIs(event, chatWin) ? chatStatePayload() : null));
+    ipcMain.handle("chat:create", async (event) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatRequest("POST", "/sessions");
+    });
+    ipcMain.handle("chat:messages", async (event, id) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatRequest("GET", `/sessions/${encodeURIComponent(String(id))}/messages`);
+    });
+    ipcMain.handle("chat:delete", async (event, id) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatRequest("DELETE", `/sessions/${encodeURIComponent(String(id))}`);
+    });
+    ipcMain.handle("chat:send", async (event, payload) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        const sessionId = String((payload && payload.sessionId) || "");
+        const content = String((payload && payload.content) || "");
+        const raw = payload && Array.isArray(payload.attachmentIds) ? payload.attachmentIds : [];
+        const attachmentIds = raw
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        if (!sessionId) return { ok: false, message: "会话不存在" };
+        return chatSendStream(sessionId, content, attachmentIds);
+    });
+    ipcMain.on("chat:stop", (event) => {
+        if (!senderIs(event, chatWin)) return;
+        if (chatAbort) chatAbort.abort();
+    });
+    ipcMain.handle("chat:pick-attachment", async (event) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatPickAttachments();
+    });
+    ipcMain.handle("chat:remove-attachment", async (event, id) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatRemoveAttachment(id);
+    });
+    ipcMain.on("chat:close", (event) => {
+        if (!senderIs(event, chatWin)) return;
+        closeChatWindow();
+    });
+    ipcMain.on("chat:open-web", (event) => {
+        if (!senderIs(event, chatWin)) return;
+        openExternal(chatUrl);
     });
     ipcMain.on("app:open-settings", (event) => {
         if (!senderIsApp(event)) return;
@@ -2274,6 +2675,7 @@ function registerIpc() {
         if (key === "mirrored" || key === "mirror") {
             repositionBubbleIfVisible();
             repositionSettingsIfVisible();
+            repositionChatIfVisible();
         }
         if (bubbleVisible && bubbleType === "panel") renderBubble(true);
         return { ok: true, prefs: { ...prefs } };
