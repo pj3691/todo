@@ -280,6 +280,53 @@
         return Boolean(types && Array.from(types).includes("Files"));
     }
 
+    // ---------- Markdown ----------
+
+    // 模型输出属于不可信内容：先按 GFM 解析，再统一消毒。
+    // 否则工具结果里的待办标题带了 <script> 之类会被直接注入页面。
+    let purifyHooked = false;
+
+    function ensurePurifyHook() {
+        if (purifyHooked || !window.DOMPurify) return;
+        purifyHooked = true;
+        window.DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+            if (!node.tagName) return;
+            if (node.tagName === "A" && node.getAttribute("href")) {
+                // 外链新窗口打开，并切断 opener
+                node.setAttribute("target", "_blank");
+                node.setAttribute("rel", "noopener noreferrer");
+            }
+            if (node.tagName === "IMG") {
+                node.setAttribute("loading", "lazy");
+                node.setAttribute("referrerpolicy", "no-referrer");
+            }
+        });
+    }
+
+    /** 渲染 markdown；依赖没加载时返回 null，由调用方退回纯文本 */
+    function renderMarkdown(text) {
+        const source = String(text || "");
+        if (!source.trim()) return "";
+        if (!window.marked || !window.DOMPurify) return null;
+        ensurePurifyHook();
+        try {
+            const html = window.marked.parse(source, { gfm: true, breaks: true });
+            return window.DOMPurify.sanitize(html, {
+                FORBID_TAGS: ["style", "form", "input", "button"],
+                FORBID_ATTR: ["style", "onerror", "onload"],
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    /** 写进气泡；渲染失败时退回纯文本，至少不丢内容 */
+    function paintMarkdown(bubble, text) {
+        const html = renderMarkdown(text);
+        if (html === null) bubble.textContent = text;
+        else bubble.innerHTML = html;
+    }
+
     // ---------- 渲染 ----------
 
     function renderSessions() {
@@ -373,7 +420,9 @@
         }
         if (toolCalls.length > 0) wrap.appendChild(tools);
 
-        wrap.appendChild(node("div", "msg-bubble", message.content || ""));
+        const bubble = node("div", "msg-bubble md");
+        paintMarkdown(bubble, message.content || "");
+        wrap.appendChild(bubble);
 
         if (message.interrupted) {
             wrap.appendChild(node("div", "msg-interrupted", "该回复被中断，内容可能不完整"));
@@ -728,7 +777,7 @@
         wrap.append(node("span", "msg-role", "助手"));
         const tools = node("div", "msg-tools");
         wrap.appendChild(tools);
-        const bubble = node("div", "msg-bubble is-pending");
+        const bubble = node("div", "msg-bubble md is-pending");
         wrap.appendChild(bubble);
         dom.messages.appendChild(wrap);
         scrollToBottom(true);
@@ -736,6 +785,24 @@
         const pending = new Map();
         let textBuffer = "";
         let finished = false;
+        let paintedAt = 0;
+        let paintTimer = 0;
+
+        // 流式增量最多 60ms 重绘一次：每个 delta 都整体解析 markdown，长回复会明显卡顿
+        const paintBubble = (force) => {
+            const now = Date.now();
+            if (!force && now - paintedAt < 60) {
+                if (!paintTimer) {
+                    paintTimer = window.setTimeout(() => {
+                        paintTimer = 0;
+                        paintBubble(true);
+                    }, 60);
+                }
+                return;
+            }
+            paintedAt = now;
+            paintMarkdown(bubble, textBuffer);
+        };
 
         state.streaming = true;
         state.controller = new AbortController();
@@ -767,7 +834,7 @@
             await consumeSse(response, (event, data) => {
                 if (event === "delta") {
                     textBuffer += String(data.text || "");
-                    bubble.textContent = textBuffer;
+                    paintBubble(false);
                     scrollToBottom(false);
                     return;
                 }
@@ -811,7 +878,8 @@
                 if (event === "error") {
                     finished = true;
                     bubble.classList.remove("is-pending");
-                    if (!textBuffer) bubble.textContent = "";
+                    if (textBuffer) paintBubble(true);
+                    else bubble.textContent = "";
                     showNotice(String(data.message || "生成失败"), "error");
                     if (!textBuffer && tools.childElementCount === 0) {
                         wrap.remove();
@@ -821,7 +889,9 @@
 
             if (!finished) {
                 bubble.classList.remove("is-pending");
-                if (!textBuffer) {
+                if (textBuffer) {
+                    paintBubble(true);
+                } else {
                     bubble.textContent = "（没有收到回复）";
                 }
             }
@@ -829,7 +899,7 @@
             bubble.classList.remove("is-pending");
             if (error.name === "AbortError") {
                 // 主动停止：服务端已把已生成内容落库，刷新一次会话内容
-                bubble.textContent = textBuffer;
+                paintMarkdown(bubble, textBuffer);
                 if (textBuffer) {
                     wrap.appendChild(node("div", "msg-interrupted", "已停止生成"));
                 }
@@ -841,6 +911,10 @@
                 if (!textBuffer) wrap.remove();
             }
         } finally {
+            if (paintTimer) {
+                window.clearTimeout(paintTimer);
+                paintTimer = 0;
+            }
             state.streaming = false;
             state.controller = null;
             updateComposerState();
