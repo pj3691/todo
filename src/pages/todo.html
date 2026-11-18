@@ -8577,8 +8577,9 @@
                 el.userAvatar.textContent = user.username.slice(0, 1).toUpperCase();
                 el.logoutBtn.classList.remove('hidden');
                 el.userLoginBtn.classList.add('hidden');
-                el.accountManageLink.classList.toggle('hidden', user.role !== 'admin');
-                el.navAccountLink.classList.toggle('hidden', user.role !== 'admin');
+                // 账号页也是普通用户管理自己 API 密钥的入口，登录即可见；用户列表仍仅管理员可见
+                el.accountManageLink.classList.remove('hidden');
+                el.navAccountLink.classList.remove('hidden');
                 el.popoverStatus.textContent = user.status === 'disabled' ? '已禁用' : '已启用';
                 el.popoverLastLogin.textContent = user.lastLoginAt || '—';
                 // 只读账号可以浏览数据，但不能管理分类与标签

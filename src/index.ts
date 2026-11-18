@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import { createHash, randomBytes } from "crypto";
 import path from "path";
 import fs from "fs";
 import express from "express";
@@ -178,6 +179,28 @@ type UserDto = {
   status: UserStatus;
   createdAt: string;
   lastLoginAt: string | null;
+};
+
+/** API 密钥行：库里只保存摘要，明文仅在发行时返回一次 */
+type ApiKeyRow = {
+  id: number;
+  user_id: number;
+  name: string;
+  key_prefix: string;
+  key_hash: string;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+};
+
+/** API 密钥对外 DTO，不含摘要 */
+type ApiKeyDto = {
+  id: number;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
 };
 
 type RuntimeConfig = {
@@ -454,6 +477,23 @@ db.exec(`
   )
 `);
 
+// API 密钥：供 MCP / 脚本等非浏览器客户端长期鉴权。
+// 明文只在发行响应里出现，库里只留 SHA-256 摘要，泄漏数据库也无法还原密钥
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    last_used_at TEXT,
+    expires_at TEXT
+  )
+`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)");
+
 const tableCols = db.prepare("PRAGMA table_info(repositories)").all() as Array<{
   name: string;
 }>;
@@ -528,6 +568,54 @@ const getActiveAdminCountStmt = db.prepare(
   "SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND status = 'active'",
 );
 
+// ========== API 密钥预编译语句 ==========
+
+/** 密钥前缀：带固定前缀才能在鉴权时一眼区分 JWT 与 API Key */
+const API_KEY_PREFIX = "gsk_";
+const API_KEY_BYTES = 24;
+/** 单账号密钥上限，避免密钥无限堆积 */
+const MAX_API_KEYS_PER_USER = 10;
+/** last_used_at 写库节流：单个密钥每分钟最多更新一次 */
+const API_KEY_TOUCH_INTERVAL_MS = 60_000;
+
+const hashApiKey = (key: string): string =>
+  createHash("sha256").update(key).digest("hex");
+
+const createApiKeyValue = (): string =>
+  `${API_KEY_PREFIX}${randomBytes(API_KEY_BYTES).toString("base64url")}`;
+
+const insertApiKeyStmt = db.prepare(
+  "INSERT INTO api_keys (user_id, name, key_prefix, key_hash, expires_at) VALUES (?, ?, ?, ?, ?)",
+);
+const getApiKeyByIdStmt = db.prepare("SELECT * FROM api_keys WHERE id = ?");
+const listApiKeysStmt = db.prepare(
+  "SELECT * FROM api_keys WHERE user_id = ? ORDER BY id DESC",
+);
+const countApiKeysStmt = db.prepare(
+  "SELECT COUNT(*) as count FROM api_keys WHERE user_id = ?",
+);
+// 过期判断交给 SQLite 的本地时间比较，避免 JS 侧再维护一套日期解析
+const getActiveApiKeyByHashStmt = db.prepare(
+  "SELECT * FROM api_keys WHERE key_hash = ? AND (expires_at IS NULL OR expires_at > datetime('now','localtime'))",
+);
+const deleteApiKeyStmt = db.prepare(
+  "DELETE FROM api_keys WHERE id = ? AND user_id = ?",
+);
+const touchApiKeyStmt = db.prepare(
+  "UPDATE api_keys SET last_used_at = datetime('now','localtime') WHERE id = ?",
+);
+const apiKeyTouchAt = new Map<number, number>();
+
+/** api_keys 行 -> 对外 DTO，永不返回摘要 */
+const toApiKeyDto = (row: ApiKeyRow): ApiKeyDto => ({
+  id: row.id,
+  name: row.name,
+  prefix: row.key_prefix,
+  createdAt: row.created_at,
+  lastUsedAt: row.last_used_at ?? null,
+  expiresAt: row.expires_at ?? null,
+});
+
 /** users 表行 -> 对外 DTO，永不返回密码哈希 */
 const toUserDto = (row: UserRow): UserDto => ({
   id: row.id,
@@ -570,7 +658,46 @@ declare global {
   }
 }
 
-/** JWT 认证中间件：验证 token，并以数据库中的最新角色/状态覆盖 token 内容 */
+/**
+ * 按 userId 载入数据库中的最新用户状态并写入 req.user。
+ * 失败时已写好响应并返回 false，鉴权分支靠返回值决定是否继续。
+ */
+const attachAuthenticatedUser = (
+  req: express.Request,
+  res: express.Response,
+  userId: number,
+): boolean => {
+  // 角色/状态可能已变化，始终以数据库为准，保证改角色、禁用账号立即生效
+  if (!Number.isInteger(userId) || userId <= 0) {
+    res.status(401).json({ res: false, message: "invalid or expired token" });
+    return false;
+  }
+  const dbUser = getUserByIdStmt.get(userId) as UserRow | undefined;
+  if (!dbUser) {
+    res.status(401).json({ res: false, message: "user no longer exists" });
+    return false;
+  }
+  if (dbUser.status === "pending") {
+    res.status(403).json({
+      res: false,
+      message: "account pending approval; please wait for an administrator to review it",
+    });
+    return false;
+  }
+  if (dbUser.status !== "active") {
+    res.status(403).json({ res: false, message: "account is disabled" });
+    return false;
+  }
+
+  req.user = {
+    userId: dbUser.id,
+    username: dbUser.username,
+    role: dbUser.role,
+  };
+  return true;
+};
+
+/** 认证中间件：接受 JWT 或 API Key，并以数据库中的最新角色/状态覆盖凭据内容 */
 const authMiddleware = (
   req: express.Request,
   res: express.Response,
@@ -582,6 +709,25 @@ const authMiddleware = (
     return;
   }
   const token = authHeader.slice(7);
+
+  // API Key 分支：MCP / 脚本等长期客户端，不走 JWT
+  if (token.startsWith(API_KEY_PREFIX)) {
+    const apiKey = getActiveApiKeyByHashStmt.get(hashApiKey(token)) as
+      | ApiKeyRow
+      | undefined;
+    if (!apiKey) {
+      res.status(401).json({ res: false, message: "invalid or expired api key" });
+      return;
+    }
+    const now = Date.now();
+    if (now - (apiKeyTouchAt.get(apiKey.id) ?? 0) > API_KEY_TOUCH_INTERVAL_MS) {
+      apiKeyTouchAt.set(apiKey.id, now);
+      touchApiKeyStmt.run(apiKey.id);
+    }
+    if (attachAuthenticatedUser(req, res, apiKey.user_id)) next();
+    return;
+  }
+
   let decoded: JwtPayload;
   try {
     decoded = jwt.verify(token, runtimeConfig.jwtSecret) as JwtPayload;
@@ -590,35 +736,7 @@ const authMiddleware = (
     return;
   }
 
-  // token 中的角色可能已过期，始终以数据库为准，保证改角色/禁用账号立即生效
-  const userId = Number(decoded?.userId);
-  if (!Number.isInteger(userId) || userId <= 0) {
-    res.status(401).json({ res: false, message: "invalid or expired token" });
-    return;
-  }
-  const dbUser = getUserByIdStmt.get(userId) as UserRow | undefined;
-  if (!dbUser) {
-    res.status(401).json({ res: false, message: "user no longer exists" });
-    return;
-  }
-  if (dbUser.status === "pending") {
-    res.status(403).json({
-      res: false,
-      message: "account pending approval; please wait for an administrator to review it",
-    });
-    return;
-  }
-  if (dbUser.status !== "active") {
-    res.status(403).json({ res: false, message: "account is disabled" });
-    return;
-  }
-
-  req.user = {
-    userId: dbUser.id,
-    username: dbUser.username,
-    role: dbUser.role,
-  };
-  next();
+  if (attachAuthenticatedUser(req, res, Number(decoded?.userId))) next();
 };
 
 /** 角色守卫中间件：要求精确匹配指定角色 */
@@ -830,6 +948,84 @@ const validatePassword = (password: string): string | null => {
   if (password.length < 6) return "password must be at least 6 characters";
   return null;
 };
+
+// ========== API 密钥 API ==========
+// 密钥属于账号自身资源，任何已登录账号都可以管理自己的密钥，
+// 权限仍由账号当前角色决定（鉴权时实时查库）
+
+/** 列出当前账号的 API 密钥: GET /gitstatus/api/auth/api-keys */
+app.get(`${apiPrefix}/auth/api-keys`, authMiddleware, (req, res) => {
+  const rows = listApiKeysStmt.all(req.user!.userId) as ApiKeyRow[];
+  res.json({ res: true, apiKeys: rows.map(toApiKeyDto) });
+});
+
+/** 发行 API 密钥: POST /gitstatus/api/auth/api-keys —— 明文只在本响应中出现一次 */
+app.post(`${apiPrefix}/auth/api-keys`, authMiddleware, (req, res) => {
+  const body = (req.body ?? {}) as { name?: unknown; expiresInDays?: unknown };
+  const name = String(body.name ?? "").trim();
+  if (!name) {
+    res.status(400).json({ res: false, message: "name is required" });
+    return;
+  }
+  if (name.length > 50) {
+    res.status(400).json({ res: false, message: "name must be at most 50 characters" });
+    return;
+  }
+
+  let expiresAt: string | null = null;
+  if (body.expiresInDays !== undefined && body.expiresInDays !== null && body.expiresInDays !== "") {
+    const days = Number(body.expiresInDays);
+    if (!Number.isInteger(days) || days <= 0 || days > 3650) {
+      res.status(400).json({
+        res: false,
+        message: "expiresInDays must be an integer between 1 and 3650",
+      });
+      return;
+    }
+    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    // 与 SQLite datetime('now','localtime') 保持同样的文本格式，便于直接比较
+    expiresAt = `${expires.getFullYear()}-${pad(expires.getMonth() + 1)}-${pad(expires.getDate())} ${pad(expires.getHours())}:${pad(expires.getMinutes())}:${pad(expires.getSeconds())}`;
+  }
+
+  const { count } = countApiKeysStmt.get(req.user!.userId) as { count: number };
+  if (count >= MAX_API_KEYS_PER_USER) {
+    res.status(409).json({
+      res: false,
+      message: `each account can hold at most ${MAX_API_KEYS_PER_USER} api keys`,
+    });
+    return;
+  }
+
+  const key = createApiKeyValue();
+  const info = insertApiKeyStmt.run(
+    req.user!.userId,
+    name,
+    key.slice(0, API_KEY_PREFIX.length + 6),
+    hashApiKey(key),
+    expiresAt,
+  );
+  const row = getApiKeyByIdStmt.get(Number(info.lastInsertRowid)) as ApiKeyRow;
+  logInfo(`[api-keys] issued key #${row.id} for user ${req.user!.userId} (${name})`);
+  res.status(201).json({ res: true, apiKey: toApiKeyDto(row), key });
+});
+
+/** 吊销 API 密钥: DELETE /gitstatus/api/auth/api-keys/:id */
+app.delete(`${apiPrefix}/auth/api-keys/:id`, authMiddleware, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ res: false, message: "invalid api key id" });
+    return;
+  }
+  const info = deleteApiKeyStmt.run(id, req.user!.userId);
+  if (info.changes === 0) {
+    res.status(404).json({ res: false, message: "api key not found" });
+    return;
+  }
+  apiKeyTouchAt.delete(id);
+  logInfo(`[api-keys] revoked key #${id} for user ${req.user!.userId}`);
+  res.json({ res: true, message: "api key revoked" });
+});
 
 /** 用户列表: GET /gitstatus/api/users?search=&role=&status=&page=&pageSize=&sort=&order= */
 app.get(`${apiPrefix}/users`, authMiddleware, requireRole("admin"), (req, res) => {

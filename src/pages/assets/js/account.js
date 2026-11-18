@@ -34,6 +34,7 @@
         deniedState: document.getElementById("deniedState"),
         deniedTitle: document.getElementById("deniedTitle"),
         deniedMessage: document.getElementById("deniedMessage"),
+        userToolbar: document.getElementById("userToolbar"),
         pageBody: document.getElementById("pageBody"),
         searchInput: document.getElementById("searchInput"),
         roleFilter: document.getElementById("roleFilter"),
@@ -71,6 +72,16 @@
         closeTransferBtn: document.getElementById("closeTransferBtn"),
         cancelTransferBtn: document.getElementById("cancelTransferBtn"),
         confirmTransferBtn: document.getElementById("confirmTransferBtn"),
+        apiKeysCard: document.getElementById("apiKeysCard"),
+        apiKeyCount: document.getElementById("apiKeyCount"),
+        apiKeyName: document.getElementById("apiKeyName"),
+        apiKeyExpires: document.getElementById("apiKeyExpires"),
+        createApiKeyBtn: document.getElementById("createApiKeyBtn"),
+        apiKeyIssued: document.getElementById("apiKeyIssued"),
+        apiKeyValue: document.getElementById("apiKeyValue"),
+        copyApiKeyBtn: document.getElementById("copyApiKeyBtn"),
+        apiKeyTableBody: document.getElementById("apiKeyTableBody"),
+        apiKeyEmpty: document.getElementById("apiKeyEmpty"),
     };
 
     let searchTimer = 0;
@@ -100,7 +111,8 @@
         el.logoutBtn.classList.toggle("hidden", !user);
         el.userLoginBtn.classList.toggle("hidden", Boolean(user));
         el.accountManageLink.classList.add("hidden");
-        el.navAccountLink.classList.toggle("hidden", !user || user.role !== "admin");
+        // 当前就在账号页，导航链接对已登录用户可见即可
+        el.navAccountLink.classList.toggle("hidden", !user);
     }
 
     function showDenied(title, message) {
@@ -582,6 +594,8 @@
     }
 
     function bindEvents() {
+        el.createApiKeyBtn.addEventListener("click", () => void createApiKey());
+        el.copyApiKeyBtn.addEventListener("click", () => void copyIssuedKey());
         el.reloadBtn.addEventListener("click", () => loadUsers());
         el.createUserBtn.addEventListener("click", openCreateModal);
         el.roleFilter.addEventListener("change", () => {
@@ -662,20 +676,149 @@
         });
     }
 
+    // ---------- 我的 API 密钥 ----------
+
+    function renderApiKeys(keys) {
+        el.apiKeyCount.textContent = String(keys.length);
+        el.apiKeyTableBody.replaceChildren();
+        el.apiKeyEmpty.classList.toggle("hidden", keys.length > 0);
+
+        for (const key of keys) {
+            const row = document.createElement("tr");
+
+            const nameCell = document.createElement("td");
+            nameCell.className = "user-name-cell";
+            nameCell.textContent = key.name;
+
+            const prefixCell = document.createElement("td");
+            const prefix = document.createElement("span");
+            prefix.className = "api-key-prefix";
+            prefix.textContent = `${key.prefix}…`;
+            prefixCell.appendChild(prefix);
+
+            const createdCell = document.createElement("td");
+            createdCell.textContent = key.createdAt || "—";
+
+            const usedCell = document.createElement("td");
+            usedCell.textContent = key.lastUsedAt || "—";
+
+            const expiresCell = document.createElement("td");
+            expiresCell.textContent = key.expiresAt || "永久";
+
+            const actionCell = document.createElement("td");
+            const revokeBtn = document.createElement("button");
+            revokeBtn.className = "btn btn-sm btn-ghost";
+            revokeBtn.type = "button";
+            revokeBtn.textContent = "吊销";
+            revokeBtn.addEventListener("click", () => void revokeApiKey(key));
+            actionCell.appendChild(revokeBtn);
+
+            row.append(nameCell, prefixCell, createdCell, usedCell, expiresCell, actionCell);
+            el.apiKeyTableBody.appendChild(row);
+        }
+    }
+
+    async function loadApiKeys() {
+        try {
+            const res = await Auth.apiFetch("/auth/api-keys");
+            const json = await Auth.parseJson(res);
+            if (!res.ok || !json.res) {
+                throw new Error(json.message || `加载失败（${res.status}）`);
+            }
+            renderApiKeys(Array.isArray(json.apiKeys) ? json.apiKeys : []);
+        } catch (error) {
+            if (error.status === 401) return;
+            showToast(error.message || "加载 API 密钥失败", "error");
+        }
+    }
+
+    async function createApiKey() {
+        const name = el.apiKeyName.value.trim();
+        if (!name) {
+            showToast("请先填写密钥名称", "warning");
+            el.apiKeyName.focus();
+            return;
+        }
+        const expiresRaw = el.apiKeyExpires.value.trim();
+        el.createApiKeyBtn.disabled = true;
+        try {
+            const res = await Auth.apiFetch("/auth/api-keys", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name,
+                    ...(expiresRaw ? { expiresInDays: Number(expiresRaw) } : {}),
+                }),
+            });
+            const json = await Auth.parseJson(res);
+            if (!res.ok || !json.res) {
+                throw new Error(json.message || `创建失败（${res.status}）`);
+            }
+            el.apiKeyName.value = "";
+            el.apiKeyExpires.value = "";
+            el.apiKeyValue.textContent = json.key || "";
+            el.apiKeyIssued.classList.remove("hidden");
+            showToast("密钥已创建，请立即保存", "success");
+            await loadApiKeys();
+        } catch (error) {
+            if (error.status === 401) return;
+            showToast(error.message || "创建密钥失败", "error");
+        } finally {
+            el.createApiKeyBtn.disabled = false;
+        }
+    }
+
+    async function revokeApiKey(key) {
+        if (!window.confirm(`确定吊销密钥「${key.name}」？已在使用的地方会立即失效。`)) return;
+        try {
+            const res = await Auth.apiFetch(`/auth/api-keys/${Number(key.id)}`, {
+                method: "DELETE",
+            });
+            const json = await Auth.parseJson(res);
+            if (!res.ok || !json.res) {
+                throw new Error(json.message || `吊销失败（${res.status}）`);
+            }
+            showToast("密钥已吊销", "success");
+            await loadApiKeys();
+        } catch (error) {
+            if (error.status === 401) return;
+            showToast(error.message || "吊销密钥失败", "error");
+        }
+    }
+
+    async function copyIssuedKey() {
+        const value = el.apiKeyValue.textContent || "";
+        if (!value) return;
+        try {
+            await navigator.clipboard.writeText(value);
+            showToast("已复制到剪贴板", "success");
+        } catch {
+            // 非安全上下文没有剪贴板 API，退回选中文本让用户手动复制
+            const range = document.createRange();
+            range.selectNodeContents(el.apiKeyValue);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            showToast("请手动复制选中的密钥", "warning");
+        }
+    }
+
     async function init() {
         bindEvents();
         const user = await Auth.loadCurrentUser();
         renderHeaderUser(user);
         if (!user) {
-            showDenied("请先登录", "账号管理仅对管理员开放，请先使用管理员账号登录。");
+            showDenied("请先登录", "登录后可以在这里管理自己的 API 密钥。");
             return;
         }
         state.user = user;
+        // 密钥属于账号自身资源，所有角色都能管理；用户列表仍只对管理员开放
+        el.apiKeysCard.classList.remove("hidden");
+        await loadApiKeys();
         if (!Auth.hasRole(user.role, "admin")) {
-            showDenied(
-                "没有访问权限",
-                `当前账号「${user.username}」的角色是${Auth.roleLabel(user.role)}，账号管理仅对管理员开放。`,
-            );
+            // 非管理员不显示用户管理工具栏，只保留自己的密钥卡片
+            el.userToolbar.classList.add("hidden");
+            el.pageBody.classList.add("hidden");
             return;
         }
         el.pageBody.classList.remove("hidden");

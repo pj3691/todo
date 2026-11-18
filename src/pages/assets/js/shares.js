@@ -114,8 +114,9 @@
         el.userAvatar.textContent = String(user.username || "?").slice(0, 1).toUpperCase();
         el.popoverStatus.textContent = Auth.statusLabel(user.status);
         el.popoverLastLogin.textContent = user.lastLoginAt || "—";
-        el.navAccountLink.classList.toggle("hidden", user.role !== "admin");
-        el.accountManageLink.classList.toggle("hidden", user.role !== "admin");
+        // 账号页也是普通用户管理自己 API 密钥的入口，登录即可见；用户列表仍仅管理员可见
+        el.navAccountLink.classList.remove("hidden");
+        el.accountManageLink.classList.remove("hidden");
         el.userLoginBtn.classList.add("hidden");
         el.logoutBtn.classList.remove("hidden");
     }

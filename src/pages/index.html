@@ -917,9 +917,9 @@
             if (lastLoginEl) lastLoginEl.textContent = authUser.lastLoginAt || '—';
             if (logoutBtn) logoutBtn.classList.remove('hidden');
             if (loginBtn) loginBtn.classList.add('hidden');
-            const isAdmin = authUser.role === 'admin';
-            if (manageLink) manageLink.classList.toggle('hidden', !isAdmin);
-            if (navAccountLink) navAccountLink.classList.toggle('hidden', !isAdmin);
+            // 账号页也是普通用户管理自己 API 密钥的入口，登录即可见；用户列表仍仅管理员可见
+            if (manageLink) manageLink.classList.remove('hidden');
+            if (navAccountLink) navAccountLink.classList.remove('hidden');
         }
         function canWrite() {
             return Boolean(authUser && (authUser.role === 'admin' || authUser.role === 'readwrite'));
