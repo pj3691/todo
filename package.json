@@ -10,6 +10,8 @@
     "dev": "nodemon",
     "desktop": "npm --prefix desktop start",
     "desktop:install": "npm --prefix desktop install",
+    "mcp": "tsx src/mcp/main.ts",
+    "mcp:docs": "tsx src/mcp/gen-docs.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
@@ -24,6 +26,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.8.0",
     "chart.js": "^4.4.0",
