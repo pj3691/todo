@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>AI 助手 · GitStatus</title>
+    <link rel="stylesheet" href="/pages/assets/styles/theme.css">
+    <link rel="stylesheet" href="/pages/assets/styles/components.css">
+    <link rel="stylesheet" href="/pages/assets/styles/chat.css">
+</head>
+
+<body class="chat-body">
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="/pages/index.html" aria-label="GitStatus 首页">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 11l3 3L22 4"></path>
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                    </svg>
+                </span>
+                <span class="brand-copy">
+                    <strong>Taskflow</strong>
+                    <small>GitStatus Workspace</small>
+                </span>
+            </a>
+
+            <nav class="top-nav" aria-label="主导航">
+                <a href="/pages/index.html">Git 洞察</a>
+                <a href="/pages/todo.html">待办清单</a>
+                <a href="/pages/shares.html">数据共享</a>
+                <a href="/pages/projects.html">项目管理</a>
+                <a class="active" href="/pages/chat.html" aria-current="page">AI 助手</a>
+                <a class="hidden" id="navAccountLink" href="/pages/account.html">账号管理</a>
+            </nav>
+
+            <div class="topbar-actions">
+                <span class="chat-user" id="chatUser">加载中…</span>
+                <button class="icon-btn hidden" id="llmSettingsBtn" type="button" title="模型设置" aria-label="模型设置">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="chat-layout">
+        <aside class="chat-sidebar">
+            <button class="chat-new" id="newSessionBtn" type="button">+ 新对话</button>
+            <div class="chat-session-list" id="sessionList" aria-label="历史会话"></div>
+            <div class="chat-sidebar-foot" id="chatFoot">—</div>
+        </aside>
+
+        <section class="chat-main">
+            <div class="chat-notice hidden" id="chatNotice"></div>
+
+            <div class="chat-empty" id="chatEmpty">
+                <strong>可以问我什么</strong>
+                <span>我会调用你当前账号有权使用的接口去查，不会凭空编。</span>
+                <ul>
+                    <li data-prompt="今天还有哪些待办没完成？">今天还有哪些待办没完成？</li>
+                    <li data-prompt="帮我建一条明天下午三点的待办，标题是「复核定稿」">帮我建一条明天下午三点的待办</li>
+                    <li data-prompt="最近有哪些项目在运行？把有报错的日志贴出来">最近有哪些项目在运行？有哪些报错？</li>
+                    <li data-prompt="这周的待办完成情况怎么样？">这周的待办完成情况怎么样？</li>
+                </ul>
+            </div>
+
+            <div class="chat-messages" id="messages" aria-live="polite"></div>
+
+            <form class="chat-composer" id="composer">
+                <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行" autocomplete="off"></textarea>
+                <button class="chat-send" id="sendBtn" type="submit">发送</button>
+                <button class="chat-stop hidden" id="stopBtn" type="button">停止</button>
+            </form>
+        </section>
+    </main>
+
+    <div class="llm-modal hidden" id="llmModal" role="dialog" aria-modal="true" aria-labelledby="llmModalTitle">
+        <div class="llm-dialog">
+            <header class="llm-head">
+                <div>
+                    <span class="modal-kicker">Model</span>
+                    <h2 id="llmModalTitle">模型设置</h2>
+                </div>
+                <button class="llm-close" id="llmCloseBtn" type="button" aria-label="关闭">×</button>
+            </header>
+
+            <div class="llm-status" id="llmStatus">正在读取…</div>
+
+            <form class="llm-form" id="llmForm">
+                <label class="llm-field">
+                    <span>接口地址 baseUrl</span>
+                    <input id="llmBaseUrl" type="text" placeholder="https://api.deepseek.com" autocomplete="off" />
+                </label>
+                <label class="llm-field">
+                    <span>模型 model</span>
+                    <input id="llmModel" type="text" placeholder="deepseek-flash" autocomplete="off" />
+                </label>
+                <label class="llm-field">
+                    <span>API Key</span>
+                    <input id="llmApiKey" type="password" placeholder="留空表示不修改" autocomplete="new-password" />
+                    <small id="llmKeyHint">密钥保存后不再回传前端，留空则沿用已保存的值。</small>
+                </label>
+                <div class="llm-row">
+                    <label class="llm-field">
+                        <span>温度 temperature</span>
+                        <input id="llmTemperature" type="number" step="0.1" min="0" max="2" />
+                    </label>
+                    <label class="llm-field">
+                        <span>最大工具轮数</span>
+                        <input id="llmMaxRounds" type="number" min="1" max="20" />
+                    </label>
+                </div>
+                <div class="llm-feedback hidden" id="llmFeedback"></div>
+                <footer class="llm-actions">
+                    <button class="btn btn-sm btn-ghost" id="llmClearBtn" type="button">清除保存的配置</button>
+                    <span class="llm-spacer"></span>
+                    <button class="btn btn-sm" id="llmTestBtn" type="button">测试连接</button>
+                    <button class="btn btn-sm btn-primary" id="llmSaveBtn" type="submit">保存</button>
+                </footer>
+            </form>
+        </div>
+    </div>
+
+    <script src="/pages/assets/js/auth-client.js"></script>
+    <script src="/pages/assets/js/chat.js"></script>
+</body>
+
+</html>

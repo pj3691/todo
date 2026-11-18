@@ -15,6 +15,7 @@ import {
   transferTodoData,
 } from "./todo.js";
 import { registerProjectFeature } from "./projects.js";
+import { registerChatFeature } from "./chat.js";
 
 type GitCommit = {
   hash: string;
@@ -2370,6 +2371,16 @@ registerProjectFeature(app, {
   requireWrite: requireMinRole("readwrite"),
   logInfo,
   logWarn,
+  logError,
+});
+
+registerChatFeature(app, {
+  db,
+  apiPrefix,
+  authMiddleware,
+  configPath,
+  serverPort: port,
+  logInfo,
   logError,
 });
 

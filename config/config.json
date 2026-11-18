@@ -4,5 +4,13 @@
   ],
   "jwtSecret": "gitstatus-default-secret-please-change",
   "jwtExpiresIn": "7d",
-  "maxPendingRegistrations": 20
+  "maxPendingRegistrations": 20,
+  "llm": {
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "",
+    "model": "deepseek-flash",
+    "temperature": 0.3,
+    "maxToolRounds": 6,
+    "timeoutMs": 60000
+  }
 }
