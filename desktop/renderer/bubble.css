@@ -46,7 +46,8 @@ body {
     border: 1px solid #e1e9e2;
     border-radius: 16px;
     background: #fff;
-    box-shadow: 0 16px 40px rgba(24, 39, 29, 0.18);
+    /* 透明窗口不要投影：投影会在卡片外形成一圈可见的暗色，看起来像窗口不透明 */
+    box-shadow: none;
     color: #17231b;
     font-size: 13px;
     line-height: 1.5;
@@ -93,7 +94,8 @@ body {
     height: 100%;
     overflow: visible;
     pointer-events: none;
-    filter: drop-shadow(0 10px 18px rgba(12, 42, 27, 0.18));
+    /* 透明窗口里不要投影：会在椭圆外留一圈暗色，看起来像窗口不透明 */
+    filter: none;
 }
 
 .bubble.is-mini .mini-bg,

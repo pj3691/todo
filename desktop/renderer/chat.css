@@ -54,7 +54,8 @@ body {
     border: 1px solid var(--line);
     border-radius: 16px;
     background: var(--surface);
-    box-shadow: 0 16px 40px rgba(24, 39, 29, 0.18);
+    /* 透明窗口不要投影：投影会在卡片外形成一圈可见的暗色，看起来像窗口不透明 */
+    box-shadow: none;
     overflow: hidden;
     opacity: 0;
     transform: translateY(6px) scale(0.985);

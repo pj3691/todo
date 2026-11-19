@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld("desktopApi", {
     openTodoAdd: () => ipcRenderer.send("app:open-todo-add"),
     // 独立对话窗口：双击桌宠或菜单里打开
     openChat: () => ipcRenderer.send("app:open-chat"),
+    // 双击场景：已打开则关闭
+    toggleChat: () => ipcRenderer.send("app:toggle-chat"),
     openSettings: () => ipcRenderer.send("app:open-settings"),
     openLogin: () => ipcRenderer.send("app:open-login"),
     hidePet: () => ipcRenderer.send("app:hide-pet"),
@@ -83,7 +85,8 @@ contextBridge.exposeInMainWorld("desktopApi", {
     chatPickAttachment: () => ipcRenderer.invoke("chat:pick-attachment"),
     chatRemoveAttachment: (id) => ipcRenderer.invoke("chat:remove-attachment", Number(id)),
     chatClose: () => ipcRenderer.send("chat:close"),
-    chatOpenWeb: () => ipcRenderer.send("chat:open-web"),
+    // 在 Electron 窗口里打开完整对话页
+    chatOpenPage: () => ipcRenderer.send("chat:open-page"),
     onChatStream: (callback) => subscribe("chat:stream", callback),
     onChatShown: (callback) => subscribe("chat:shown", callback)
 });

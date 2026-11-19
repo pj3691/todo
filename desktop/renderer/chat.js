@@ -150,7 +150,7 @@
 
     function renderFoot(snapshot) {
         if (snapshot && snapshot.loggedIn === false) {
-            dom.foot.textContent = "未登录：点右上角 ↗ 或右键桌宠登录";
+            dom.foot.textContent = "未登录：右键桌宠选择「登录 GitStatus」";
             return;
         }
         const model = state.llm && state.llm.model ? state.llm.model : "未配置模型";
@@ -582,7 +582,7 @@
 
     function bindEvents() {
         dom.closeBtn.addEventListener("click", () => api.chatClose());
-        dom.webBtn.addEventListener("click", () => api.chatOpenWeb());
+        dom.webBtn.addEventListener("click", () => api.chatOpenPage());
         dom.newBtn.addEventListener("click", () => void createSession());
         dom.deleteBtn.addEventListener("click", () => void deleteSession());
         dom.attachBtn.addEventListener("click", () => void pickAttachments());

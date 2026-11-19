@@ -18,8 +18,9 @@
     const todoBtn = root.querySelector(".pet-todo-btn");
 
     const IDLE_AFTER_MS = 60000;
-    const PENDING_CLICK_MS = 220;
+    // 单击要等过双击窗口再执行：否则第二击来得稍晚时，会先弹出气泡再执行双击
     const DOUBLE_CLICK_MS = 280;
+    const PENDING_CLICK_MS = 320;
     const DRAG_THRESHOLD = 4;
 
     let idleTimer = 0;
@@ -99,8 +100,8 @@
                 global.clearTimeout(clickTimer);
                 clickTimer = 0;
             }
-            // 双击打开独立的 AI 对话窗口；完整面板仍可通过侧边菜单按钮打开
-            api.openChat();
+            // 双击开关 AI 对话浮窗；完整面板仍可通过侧边菜单按钮打开
+            api.toggleChat();
             return;
         }
         lastClickAt = now;

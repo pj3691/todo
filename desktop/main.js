@@ -247,6 +247,8 @@ let settingsWin = null;
 let loginWin = null;
 let todoWin = null;
 let chatWin = null;
+// 完整对话页（常规窗口），与贴桌宠的浮窗分开管理
+let chatPageWin = null;
 let tray = null;
 
 let petHidden = false;
@@ -1586,6 +1588,73 @@ function repositionChatIfVisible() {
     applyChatBounds();
 }
 
+/**
+ * 双击桌宠：浮窗已显示就关掉，否则打开。
+ * 与托盘/右键菜单的 openChatWindow 区分——那里始终是「打开或聚焦」。
+ */
+function toggleChatWindow() {
+    if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) {
+        closeChatWindow();
+        return;
+    }
+    openChatWindow();
+}
+
+/** 在 Electron 窗口里打开完整对话页，而不是丢给系统浏览器 */
+function openChatPageWindow() {
+    closeChatWindow();
+    if (chatPageWin && !chatPageWin.isDestroyed()) {
+        chatPageWin.show();
+        chatPageWin.focus();
+        if (!String(chatPageWin.webContents.getURL()).includes("/pages/chat.html")) {
+            void chatPageWin.loadURL(chatUrl);
+        }
+        return;
+    }
+    const area = getSelectedDisplay().workArea;
+    const width = Math.min(1120, area.width);
+    const height = Math.min(820, area.height);
+    chatPageWin = new BrowserWindow({
+        width,
+        height,
+        x: area.x + Math.max(0, Math.floor((area.width - width) / 2)),
+        y: area.y + Math.max(0, Math.floor((area.height - height) / 2)),
+        minWidth: Math.min(860, width),
+        minHeight: Math.min(560, height),
+        title: "GitStatus AI 助手",
+        autoHideMenuBar: true,
+        backgroundColor: "#f3f7f2",
+        icon: trayIconPath,
+        show: false,
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false
+        }
+    });
+    chatPageWin.setMenuBarVisibility(false);
+    // 页面里的外链交给系统浏览器，内置跳转留在本窗口
+    chatPageWin.webContents.setWindowOpenHandler(({ url }) => {
+        openExternal(url);
+        return { action: "deny" };
+    });
+    chatPageWin.webContents.on("will-navigate", (event, url) => {
+        if (url.startsWith(serverUrl)) return;
+        event.preventDefault();
+        openExternal(url);
+    });
+    chatPageWin.once("ready-to-show", () => {
+        if (!chatPageWin || chatPageWin.isDestroyed()) return;
+        chatPageWin.show();
+        chatPageWin.focus();
+    });
+    void chatPageWin.loadURL(chatUrl);
+    chatPageWin.on("closed", () => {
+        chatPageWin = null;
+    });
+}
+
 // ---------- AI 助手浮窗数据 ----------
 /**
  * 对话接口全部由主进程代理：浮窗是 file:// 页面，直接跨域调不到后端，
@@ -2453,6 +2522,10 @@ function registerIpc() {
         if (!senderIsApp(event)) return;
         openChatWindow();
     });
+    ipcMain.on("app:toggle-chat", (event) => {
+        if (!senderIsApp(event)) return;
+        toggleChatWindow();
+    });
 
     // AI 助手浮窗：数据代理与流式转发
     ipcMain.handle("chat:get-state", (event) => (senderIs(event, chatWin) ? chatStatePayload() : null));
@@ -2495,9 +2568,9 @@ function registerIpc() {
         if (!senderIs(event, chatWin)) return;
         closeChatWindow();
     });
-    ipcMain.on("chat:open-web", (event) => {
+    ipcMain.on("chat:open-page", (event) => {
         if (!senderIs(event, chatWin)) return;
-        openExternal(chatUrl);
+        openChatPageWindow();
     });
     ipcMain.on("app:open-settings", (event) => {
         if (!senderIsApp(event)) return;
