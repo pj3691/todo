@@ -91,6 +91,51 @@
             flex-wrap: wrap;
         }
 
+        /* 顶部操作收拢：工具类动作用图标与「更多」菜单，主操作保留文字 */
+        .toolbar-icon-btn {
+            width: 38px;
+            padding: 0;
+            color: var(--muted);
+        }
+
+        .toolbar-icon-btn:hover {
+            color: var(--green-strong);
+        }
+
+        .toolbar-menu {
+            position: relative;
+        }
+
+        .toolbar-more-btn {
+            gap: 5px;
+        }
+
+        .toolbar-more-caret {
+            width: 13px;
+            height: 13px;
+            transition: transform 0.16s ease;
+        }
+
+        .toolbar-menu.is-open .toolbar-more-caret {
+            transform: rotate(180deg);
+        }
+
+        .toolbar-menu.is-open .toolbar-more-btn {
+            border-color: #b9d8c5;
+            color: var(--green-strong);
+        }
+
+        .toolbar-dropdown {
+            min-width: 178px;
+            z-index: 60;
+        }
+
+        .toolbar-menu-sep {
+            height: 1px;
+            margin: 4px 6px;
+            background: var(--line);
+        }
+
         .project-summary {
             display: flex;
             align-items: center;
@@ -2505,16 +2550,44 @@
                     <p>登记本地项目，启动或停止运行命令，并在终端里查看实时输出</p>
                 </div>
                 <div class="toolbar">
-                    <button class="btn" id="toggleAllProjectsBtn" type="button">全部展开</button>
-                    <button class="btn" id="refreshBtn" type="button">刷新</button>
+                    <button class="btn toolbar-icon-btn" id="refreshBtn" type="button" title="刷新" aria-label="刷新">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><path d="M21 3v6h-6"></path></svg>
+                    </button>
+                    <button class="btn toolbar-icon-btn" id="toggleAllProjectsBtn" type="button" title="全部展开" aria-label="全部展开">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>
+                    </button>
+                    <div class="toolbar-menu" id="projectsToolbarMore">
+                        <button class="btn toolbar-more-btn" id="projectsMoreBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="更多项目操作">
+                            <span>更多</span>
+                            <svg class="toolbar-more-caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                        </button>
+                        <div class="project-open-dropdown toolbar-dropdown hidden" id="projectsMoreDropdown" role="menu">
+                            <button class="project-open-option" id="importProjectsBtn" type="button" role="menuitem" title="从导出的 JSON 文件导入项目信息">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M4 21h16"></path></svg>
+                                <span>导入项目</span>
+                            </button>
+                            <button class="project-open-option" id="exportProjectsBtn" type="button" role="menuitem" title="把项目信息导出为 JSON 文件，便于迁移到其他机器">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17V5"></path><path d="m7 10 5-5 5 5"></path><path d="M4 21h16"></path></svg>
+                                <span>导出项目</span>
+                            </button>
+                            <button class="project-open-option" id="detectAllGitUrlBtn" type="button" role="menuitem" title="为还没有远程地址的项目自动读取 Git origin，已有地址的会跳过">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg>
+                                <span>识别远程地址</span>
+                            </button>
+                            <div class="toolbar-menu-sep" role="separator"></div>
+                            <button class="project-open-option" id="oneShotConfigBtn" type="button" role="menuitem" title="配置需要一键启动的项目">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10"></path><path d="M18 6h2"></path><circle cx="16" cy="6" r="2"></circle><path d="M4 12h2"></path><path d="M10 12h10"></path><circle cx="8" cy="12" r="2"></circle><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="18" r="2"></circle></svg>
+                                <span>启动配置</span>
+                            </button>
+                        </div>
+                    </div>
+                    <button class="btn" id="addFolderBtn" type="button">新建文件夹</button>
                     <button class="btn" id="portToolBtn" type="button" title="查询并结束占用某端口的进程">端口占用</button>
-                    <button class="btn" id="oneShotConfigBtn" type="button" title="配置需要一键启动的项目">启动配置</button>
+                    <button class="btn" id="cloneProjectBtn" type="button" title="从 Git 远程仓库拉取代码到本机">拉取项目</button>
                     <button class="btn btn-start-all" id="oneShotStartBtn" type="button" title="一键启动已配置的项目">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"></path></svg>
                         <span>一键启动</span>
                     </button>
-                    <button class="btn" id="addFolderBtn" type="button">新建文件夹</button>
-                    <button class="btn" id="cloneProjectBtn" type="button" title="从 Git 远程仓库拉取代码到本机">拉取项目</button>
                     <button class="btn btn-primary" id="addProjectBtn" type="button">添加项目</button>
                 </div>
             </div>
@@ -2713,6 +2786,45 @@
                 <div class="modal-footer">
                     <button class="btn" id="cancelCloneProjectBtn" type="button">取消</button>
                     <button class="btn btn-primary" id="confirmCloneProjectBtn" type="submit">开始拉取</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-layer" id="importProjectsModal" aria-hidden="true">
+        <div class="modal is-narrow" role="dialog" aria-modal="true" aria-labelledby="importProjectsTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-kicker">Import Projects</span>
+                    <h2 id="importProjectsTitle">导入项目</h2>
+                    <p>从其他机器导出的 JSON 文件恢复项目信息，路径可按本机目录重新映射</p>
+                </div>
+                <button class="icon-btn" id="closeImportProjectsModalBtn" type="button" aria-label="关闭">✕</button>
+            </div>
+            <form id="importProjectsForm">
+                <div class="modal-body">
+                    <div class="field">
+                        <label class="field-label" for="importFileName">导出文件</label>
+                        <div class="input-with-button">
+                            <input class="text-input" id="importFileName" type="text" readonly placeholder="选择由 GitStatus 导出的 JSON 文件">
+                            <button class="btn path-pick-btn" id="pickImportFileBtn" type="button" title="选择文件" aria-label="选择文件">…</button>
+                        </div>
+                        <input class="hidden" id="importProjectsFile" type="file" accept=".json,application/json">
+                        <p class="field-hint" id="importProjectsSummary">导出文件包含项目地址、分类、远程地址、启动与运行命令以及项目介绍</p>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="importTargetDir">项目根目录（可选）</label>
+                        <div class="input-with-button">
+                            <input class="text-input" id="importTargetDir" type="text" placeholder="选择本机存放项目的根目录">
+                            <button class="btn path-pick-btn" id="pickImportTargetDirBtn" type="button" title="选择文件夹" aria-label="选择文件夹">…</button>
+                        </div>
+                        <p class="field-hint">填写后会把导出的项目地址换成「本机根目录 + 相对路径」，适合新机器上的目录结构与原来不同</p>
+                    </div>
+                    <div class="form-error hidden" id="importProjectsError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" id="cancelImportProjectsBtn" type="button">取消</button>
+                    <button class="btn btn-primary" id="confirmImportProjectsBtn" type="submit">开始导入</button>
                 </div>
             </form>
         </div>

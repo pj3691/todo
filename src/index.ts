@@ -324,7 +324,8 @@ const loadRuntimeConfig = (): RuntimeConfig => {
 const runtimeConfig = loadRuntimeConfig();
 const corsAllowSet = new Set(runtimeConfig.allowedOrigins);
 
-app.use(express.json());
+// 导入项目等场景需要提交较大的 JSON，放宽默认的 100KB 限制
+app.use(express.json({ limit: "5mb" }));
 
 // HTTP 访问日志中间件：记录请求方法、路径、状态码、耗时
 app.use((req, res, next) => {

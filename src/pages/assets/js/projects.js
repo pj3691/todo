@@ -158,6 +158,7 @@
         defaultEditors: loadDefaultEditors(),
         defaultFolderEditors: loadDefaultFolderEditors(),
         cloningProjectId: null,
+        pendingImport: null,
         usage: [],
         usageAvailable: true,
         usageLoading: false,
@@ -254,6 +255,24 @@
         confirmCloneProjectBtn: document.getElementById("confirmCloneProjectBtn"),
         closeCloneProjectModalBtn: document.getElementById("closeCloneProjectModalBtn"),
         cancelCloneProjectBtn: document.getElementById("cancelCloneProjectBtn"),
+        exportProjectsBtn: document.getElementById("exportProjectsBtn"),
+        importProjectsBtn: document.getElementById("importProjectsBtn"),
+        detectAllGitUrlBtn: document.getElementById("detectAllGitUrlBtn"),
+        projectsToolbarMore: document.getElementById("projectsToolbarMore"),
+        projectsMoreBtn: document.getElementById("projectsMoreBtn"),
+        projectsMoreDropdown: document.getElementById("projectsMoreDropdown"),
+        importProjectsModal: document.getElementById("importProjectsModal"),
+        importProjectsForm: document.getElementById("importProjectsForm"),
+        importProjectsFile: document.getElementById("importProjectsFile"),
+        importFileName: document.getElementById("importFileName"),
+        pickImportFileBtn: document.getElementById("pickImportFileBtn"),
+        importProjectsSummary: document.getElementById("importProjectsSummary"),
+        importTargetDir: document.getElementById("importTargetDir"),
+        pickImportTargetDirBtn: document.getElementById("pickImportTargetDirBtn"),
+        importProjectsError: document.getElementById("importProjectsError"),
+        confirmImportProjectsBtn: document.getElementById("confirmImportProjectsBtn"),
+        cancelImportProjectsBtn: document.getElementById("cancelImportProjectsBtn"),
+        closeImportProjectsModalBtn: document.getElementById("closeImportProjectsModalBtn"),
         folderForm: document.getElementById("folderForm"),
         folderModalKicker: document.getElementById("folderModalKicker"),
         folderModalTitle: document.getElementById("folderModalTitle"),
@@ -1042,8 +1061,17 @@
     function updateCollapseButton() {
         if (!el.toggleAllProjectsBtn) return;
         const hasExpanded = state.expandedProjects.size > 0;
-        el.toggleAllProjectsBtn.textContent = hasExpanded ? "全部收起" : "全部展开";
+        const label = hasExpanded ? "全部收起" : "全部展开";
+        el.toggleAllProjectsBtn.title = label;
+        el.toggleAllProjectsBtn.setAttribute("aria-label", label);
         el.toggleAllProjectsBtn.disabled = state.projects.length === 0;
+    }
+
+    function setToolbarMenuOpen(open) {
+        if (!el.projectsToolbarMore) return;
+        el.projectsToolbarMore.classList.toggle("is-open", open);
+        el.projectsMoreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        el.projectsMoreDropdown.classList.toggle("hidden", !open);
     }
 
     function closeOpenMenus() {
@@ -2050,6 +2078,168 @@
         }
     }
 
+    // 一键识别：只补全还没有远程地址的项目，已有地址的不覆盖
+    async function detectAllGitUrls() {
+        const button = el.detectAllGitUrlBtn;
+        if (!button || button.disabled) return;
+        const label = button.querySelector("span");
+        const previousText = label ? label.textContent : "";
+        button.disabled = true;
+        if (label) label.textContent = "识别中…";
+        try {
+            const json = await api("/projects/detect-git-all", { method: "POST" });
+            const updated = Array.isArray(json.updated) ? json.updated.length : 0;
+            const skipped = Array.isArray(json.skipped) ? json.skipped.length : 0;
+            const failed = Array.isArray(json.failed) ? json.failed.length : 0;
+            const parts = [`已识别 ${updated} 个项目`];
+            if (skipped) parts.push(`跳过 ${skipped} 个已有地址`);
+            if (failed) parts.push(`${failed} 个未识别到`);
+            showToast(parts.join("，"), failed ? "warning" : "success");
+            if (updated) await loadProjects();
+        } catch (error) {
+            handleActionError(error, "识别远程地址失败");
+        } finally {
+            button.disabled = false;
+            if (label) label.textContent = previousText;
+        }
+    }
+
+    // ---------- 项目导出 / 导入 ----------
+    function exportFileName(date = new Date()) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `gitstatus-projects-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}.json`;
+    }
+
+    async function exportProjects() {
+        const previousText = el.exportProjectsBtn.textContent;
+        el.exportProjectsBtn.disabled = true;
+        el.exportProjectsBtn.textContent = "导出中…";
+        try {
+            const response = await Auth.apiFetch("/projects/export");
+            if (!response.ok) {
+                const json = await Auth.parseJson(response);
+                const error = new Error(json.message || `导出失败（${response.status}）`);
+                error.status = response.status;
+                throw error;
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = exportFileName();
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showToast("项目信息已导出");
+        } catch (error) {
+            handleActionError(error, "导出项目失败");
+        } finally {
+            el.exportProjectsBtn.disabled = false;
+            el.exportProjectsBtn.textContent = previousText;
+        }
+    }
+
+    function setImportError(message) {
+        if (!message) {
+            el.importProjectsError.textContent = "";
+            el.importProjectsError.classList.add("hidden");
+            return;
+        }
+        el.importProjectsError.textContent = message;
+        el.importProjectsError.classList.remove("hidden");
+    }
+
+    function openImportProjectsModal() {
+        state.pendingImport = null;
+        el.importProjectsFile.value = "";
+        el.importFileName.value = "";
+        el.importTargetDir.value = "";
+        el.importProjectsSummary.textContent = "导出文件包含项目地址、分类、远程地址、启动与运行命令以及项目介绍";
+        setImportError("");
+        el.importProjectsModal.classList.add("is-open");
+        el.importProjectsModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        window.setTimeout(() => el.pickImportFileBtn.focus(), 40);
+    }
+
+    function closeImportProjectsModal() {
+        el.importProjectsModal.classList.remove("is-open");
+        el.importProjectsModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        state.pendingImport = null;
+    }
+
+    async function handleImportFileChange() {
+        const file = el.importProjectsFile.files && el.importProjectsFile.files[0];
+        if (!file) return;
+        el.importFileName.value = file.name;
+        setImportError("");
+        try {
+            const payload = JSON.parse(await file.text());
+            if (!payload || payload.format !== "gitstatus-projects") {
+                throw new Error("不是由 GitStatus 导出的项目文件");
+            }
+            const projects = Array.isArray(payload.projects) ? payload.projects : [];
+            if (!projects.length) throw new Error("导入文件里没有项目");
+            const folders = Array.isArray(payload.folders) ? payload.folders : [];
+            const exportedAt = payload.exportedAt ? `，导出于 ${payload.exportedAt}` : "";
+            const baseDir = payload.baseDir ? `，原根目录 ${payload.baseDir}` : "";
+            state.pendingImport = payload;
+            el.importProjectsSummary.textContent = `共 ${projects.length} 个项目、${folders.length} 个文件夹${exportedAt}${baseDir}`;
+        } catch (error) {
+            state.pendingImport = null;
+            el.importProjectsSummary.textContent = "导出文件包含项目地址、分类、远程地址、启动与运行命令以及项目介绍";
+            setImportError(
+                error instanceof SyntaxError ? "文件不是有效的 JSON" : error.message || "读取导入文件失败"
+            );
+        }
+    }
+
+    async function submitImportProjects(event) {
+        event.preventDefault();
+        if (!state.pendingImport) {
+            setImportError("请先选择导出的 JSON 文件");
+            return;
+        }
+        setImportError("");
+        const previousText = el.confirmImportProjectsBtn.textContent;
+        el.confirmImportProjectsBtn.disabled = true;
+        el.cancelImportProjectsBtn.disabled = true;
+        el.confirmImportProjectsBtn.textContent = "导入中…";
+        try {
+            const json = await api("/projects/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    data: state.pendingImport,
+                    baseDir: el.importTargetDir.value.trim(),
+                }),
+            });
+            closeImportProjectsModal();
+            const skipped = Array.isArray(json.skipped) ? json.skipped : [];
+            const failed = Array.isArray(json.failed) ? json.failed : [];
+            const missing = Array.isArray(json.missing) ? json.missing : [];
+            const parts = [`已导入 ${json.created || 0} 个项目`];
+            if (skipped.length) parts.push(`跳过 ${skipped.length} 个已存在`);
+            if (failed.length) parts.push(`失败 ${failed.length} 个`);
+            showToast(parts.join("，"), failed.length ? "warning" : "success");
+            if (failed.length) {
+                showToast(failed[0].message || "部分项目导入失败", "error");
+            }
+            if (missing.length) {
+                showToast(`${missing.length} 个项目目录在本机还不存在，可用「拉取项目」克隆后再启动`, "warning");
+            }
+            await loadProjects();
+        } catch (error) {
+            setImportError(error.message || "导入项目失败");
+        } finally {
+            el.confirmImportProjectsBtn.disabled = false;
+            el.cancelImportProjectsBtn.disabled = false;
+            el.confirmImportProjectsBtn.textContent = previousText;
+        }
+    }
+
     async function saveProject(event) {
         event.preventDefault();
         const projectPath = el.projectPath.value.trim();
@@ -2567,6 +2757,21 @@
         });
 
         el.refreshBtn.addEventListener("click", () => void loadProjects());
+        el.projectsMoreBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            setToolbarMenuOpen(!el.projectsToolbarMore.classList.contains("is-open"));
+        });
+        // 点菜单项、点菜单外部或按 Esc 都收起，避免遮盖下方内容
+        el.projectsMoreDropdown.addEventListener("click", (event) => {
+            if (event.target.closest("button")) setToolbarMenuOpen(false);
+        });
+        document.addEventListener("click", (event) => {
+            if (el.projectsToolbarMore.contains(event.target)) return;
+            setToolbarMenuOpen(false);
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") setToolbarMenuOpen(false);
+        });
         el.usageCollapseBtn?.addEventListener("click", () => setUsageCollapsed(true));
         el.usageRailToggle?.addEventListener("click", () => setUsageCollapsed(false));
         // 启动进程列表：点击卡片定位到对应项目并展开菜单
@@ -2595,6 +2800,18 @@
         el.cancelCloneProjectBtn.addEventListener("click", closeCloneProjectModal);
         el.cloneProjectForm.addEventListener("submit", submitCloneProject);
         el.pickCloneTargetDirBtn.addEventListener("click", () => void pickFolderInto(el.cloneTargetDir, el.pickCloneTargetDirBtn));
+        el.exportProjectsBtn.addEventListener("click", () => void exportProjects());
+        el.importProjectsBtn.addEventListener("click", openImportProjectsModal);
+        el.detectAllGitUrlBtn.addEventListener("click", () => void detectAllGitUrls());
+        el.closeImportProjectsModalBtn.addEventListener("click", closeImportProjectsModal);
+        el.cancelImportProjectsBtn.addEventListener("click", closeImportProjectsModal);
+        el.importProjectsForm.addEventListener("submit", submitImportProjects);
+        el.pickImportFileBtn.addEventListener("click", () => el.importProjectsFile.click());
+        el.importProjectsFile.addEventListener("change", () => void handleImportFileChange());
+        el.pickImportTargetDirBtn.addEventListener("click", () => void pickFolderInto(el.importTargetDir, el.pickImportTargetDirBtn));
+        el.importProjectsModal.addEventListener("click", (event) => {
+            if (event.target === el.importProjectsModal) closeImportProjectsModal();
+        });
         el.closeFolderModalBtn.addEventListener("click", closeFolderModal);
         el.cancelFolderBtn.addEventListener("click", closeFolderModal);
         el.folderForm.addEventListener("submit", saveFolder);

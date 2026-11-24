@@ -1527,6 +1527,9 @@ export const registerProjectFeature = (
     const updateProjectStmt = db.prepare(
         `UPDATE projects SET name = ?, path = ?, type = ?, command = ?, folder = ?, intro = ?, git_url = ?, updated_at = ? WHERE id = ?`
     );
+    const updateProjectGitUrlStmt = db.prepare(
+        "UPDATE projects SET git_url = ?, updated_at = ? WHERE id = ?"
+    );
     const deleteProjectStmt = db.prepare("DELETE FROM projects WHERE id = ?");
     const deleteProjectCommandsStmt = db.prepare("DELETE FROM project_commands WHERE project_id = ?");
     const insertProjectCommandStmt = db.prepare(
@@ -1742,6 +1745,84 @@ export const registerProjectFeature = (
         links.forEach((item, index) => {
             insertProjectLinkStmt.run(projectId, item.name, item.url, index, now, now);
         });
+    };
+
+    // ---------- 项目导入 / 导出 ----------
+    // 判断重复项目用的路径基准：忽略大小写与斜杠方向，避免同一目录被导入两份
+    const normalizePathKey = (value: string): string =>
+        path.resolve(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+    // 取一组项目目录的公共父目录；公共前缀只剩盘符/根目录时返回空，避免相对路径没有区分度
+    const findCommonBaseDir = (paths: string[]): string => {
+        const parents = paths.map((item) => path.dirname(path.resolve(item)));
+        const first = parents[0];
+        if (!first) return "";
+        let shared = first.split(path.sep);
+        for (const parent of parents.slice(1)) {
+            const parts = parent.split(path.sep);
+            let index = 0;
+            while (
+                index < shared.length &&
+                index < parts.length &&
+                (shared[index] ?? "").toLowerCase() === (parts[index] ?? "").toLowerCase()
+            ) {
+                index += 1;
+            }
+            shared = shared.slice(0, index);
+        }
+        const joined = shared.join(path.sep);
+        if (!joined || joined === path.parse(first).root) return "";
+        return joined;
+    };
+
+    // 只有目标位于 baseDir 内才给出相对路径，保证导入时不会映射到父级目录之外
+    const toRelativePath = (baseDir: string, target: string): string => {
+        if (!baseDir || !target) return "";
+        const relative = path.relative(baseDir, target);
+        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return "";
+        return relative;
+    };
+
+    // 导出内容只带可迁移的配置，运行时状态、进程与服务端自增 ID 都不参与
+    const buildProjectExport = () => {
+        const rows = listProjectsStmt.all() as ProjectRow[];
+        const commandMap = getCommandsMap();
+        const linkMap = getLinksMap();
+        const quickstartIds = new Set(
+            (listQuickstartStmt.all() as Array<{ project_id: number }>).map((row) => row.project_id)
+        );
+        const baseDir = findCommonBaseDir(rows.map((row) => row.path));
+        return {
+            format: "gitstatus-projects",
+            version: 1,
+            exportedAt: formatDateTime(),
+            baseDir,
+            folders: (listProjectFoldersStmt.all() as ProjectFolderRow[]).map((row) => ({
+                name: row.name,
+                path: row.path || "",
+                relativePath: toRelativePath(baseDir, row.path || ""),
+                sortOrder: Number(row.sort_order) || 0,
+            })),
+            projects: rows.map((row) => ({
+                name: row.name,
+                path: row.path,
+                relativePath: toRelativePath(baseDir, row.path),
+                type: row.type,
+                startCommand: row.command,
+                folder: row.folder || "",
+                intro: row.intro || "",
+                gitUrl: row.git_url || "",
+                quickstart: quickstartIds.has(row.id),
+                runCommands: (commandMap.get(row.id) || []).map((item) => ({
+                    name: item.name,
+                    command: item.command,
+                })),
+                links: (linkMap.get(row.id) || []).map((item) => ({
+                    name: item.name,
+                    url: item.url,
+                })),
+            })),
+        };
     };
 
     const createProjectWithCommands = db.transaction(
@@ -2530,6 +2611,47 @@ export const registerProjectFeature = (
         }
     });
 
+    // 批量识别：为还没有远程地址的项目读取 origin，已有地址的不覆盖
+    projectRouter.post("/detect-git-all", async (req, res) => {
+        try {
+            if (!isLoopbackRequest(req)) {
+                throw new ProjectError(403, "只能读取运行后端本机上的 Git 信息");
+            }
+            const rows = listProjectsStmt.all() as ProjectRow[];
+            const updated: Array<{ id: number; name: string; url: string }> = [];
+            const skipped: Array<{ id: number; name: string }> = [];
+            const failed: Array<{ id: number; name: string; message: string }> = [];
+            for (const row of rows) {
+                if (String(row.git_url || "").trim()) {
+                    skipped.push({ id: row.id, name: row.name });
+                    continue;
+                }
+                try {
+                    const directory = resolveProjectDirectory(row.path);
+                    const remote = await detectGitRemote(directory);
+                    if (!remote.url) {
+                        failed.push({ id: row.id, name: row.name, message: "未识别到远程地址" });
+                        continue;
+                    }
+                    updateProjectGitUrlStmt.run(remote.url, formatDateTime(), row.id);
+                    updated.push({ id: row.id, name: row.name, url: remote.url });
+                } catch (error) {
+                    failed.push({
+                        id: row.id,
+                        name: row.name,
+                        message: error instanceof Error ? error.message : "识别失败",
+                    });
+                }
+            }
+            logInfo(
+                `[projects] detect git urls: updated ${updated.length}, skipped ${skipped.length}, failed ${failed.length}`
+            );
+            res.json({ res: true, total: rows.length, updated, skipped, failed });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
     // 拉取项目：把远程仓库 clone 到后端本机指定目录，返回路径与项目识别结果
     projectRouter.post("/clone", async (req, res) => {
         let destination = "";
@@ -2596,6 +2718,171 @@ export const registerProjectFeature = (
             res: true,
             folders: (listProjectFoldersStmt.all() as ProjectFolderRow[]).map(toFolderDto),
         });
+    });
+
+    // 导出项目信息：带鉴权下载 JSON，用于迁移到其他机器后导入
+    projectRouter.get("/export", (_req, res) => {
+        try {
+            const payload = buildProjectExport();
+            const stamp = payload.exportedAt.replace(/[^0-9]/g, "").slice(0, 12);
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader(
+                "Content-Disposition",
+                `attachment; filename="gitstatus-projects-${stamp}.json"`
+            );
+            res.send(JSON.stringify(payload, null, 2));
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
+    // 导入项目信息：按路径去重，可选择目标机器上的项目根目录做路径映射
+    projectRouter.post("/import", (req, res) => {
+        try {
+            const request = req as AuthedRequest;
+            const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<
+                string,
+                unknown
+            >;
+            const payload = (body.data && typeof body.data === "object" ? body.data : body) as Record<
+                string,
+                unknown
+            >;
+            if (String(payload.format || "") !== "gitstatus-projects") {
+                throw new ProjectError(400, "不是由 GitStatus 导出的项目文件");
+            }
+            if (Number(payload.version) !== 1) {
+                throw new ProjectError(400, "导入文件的版本不受支持");
+            }
+            if (!Array.isArray(payload.projects)) {
+                throw new ProjectError(400, "导入文件缺少项目列表");
+            }
+
+            // 目标机器上的项目根目录：填写后按导出时的相对路径替换项目地址
+            const targetBaseRaw = String(body.baseDir ?? "").trim();
+            const targetBase = targetBaseRaw ? resolveFolderPath(targetBaseRaw) : "";
+            const exportBase = String(payload.baseDir ?? "").trim();
+            const mapPath = (rawPath: string, relativePath: unknown): string => {
+                const relative = String(relativePath ?? "").trim();
+                const fallbackRelative =
+                    targetBase && exportBase ? toRelativePath(exportBase, rawPath) : "";
+                const useRelative = relative || fallbackRelative;
+                if (!targetBase || !useRelative) return rawPath;
+                return path.join(targetBase, useRelative);
+            };
+
+            const now = formatDateTime();
+            const importedFolders: string[] = [];
+            const folderList = Array.isArray(payload.folders) ? payload.folders.slice(0, 200) : [];
+            for (const item of folderList) {
+                const record = (item && typeof item === "object" ? item : {}) as Record<
+                    string,
+                    unknown
+                >;
+                let name = "";
+                try {
+                    name = parseProjectFolder(record.name);
+                } catch {
+                    continue;
+                }
+                if (!name || getProjectFolderStmt.get(name)) continue;
+                // 文件夹路径同样做映射；本机不存在就留空，稍后可在页面上重新设置
+                let folderPath = "";
+                try {
+                    folderPath = resolveFolderPath(mapPath(String(record.path ?? ""), record.relativePath));
+                } catch {
+                    folderPath = "";
+                }
+                const sortOrder = Number(record.sortOrder);
+                insertNewProjectFolderStmt.run(
+                    name,
+                    folderPath,
+                    Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : nextFolderSortOrder(),
+                    now,
+                    now
+                );
+                importedFolders.push(name);
+            }
+
+            const existingPaths = new Set(
+                (listProjectsStmt.all() as ProjectRow[]).map((row) => normalizePathKey(row.path))
+            );
+            const created: Array<{ id: number; name: string; path: string }> = [];
+            const skipped: Array<{ name: string; path: string; reason: string }> = [];
+            const failed: Array<{ name: string; message: string }> = [];
+            const missing: Array<{ name: string; path: string }> = [];
+
+            for (const item of payload.projects.slice(0, 1000)) {
+                const record = (item && typeof item === "object" ? item : {}) as Record<
+                    string,
+                    unknown
+                >;
+                const rawName = String(record.name ?? "").trim();
+                const rawPath = String(record.path ?? "").trim();
+                try {
+                    if (!rawPath) throw new ProjectError(400, "缺少项目地址");
+                    if (rawPath.includes("\0")) throw new ProjectError(400, "项目地址不合法");
+                    const projectPath = path.resolve(mapPath(rawPath, record.relativePath));
+                    const name = (rawName || path.basename(projectPath) || "未命名项目").slice(0, 120);
+                    if (existingPaths.has(normalizePathKey(projectPath))) {
+                        skipped.push({ name, path: projectPath, reason: "已存在相同路径的项目" });
+                        continue;
+                    }
+                    const startCommand = String(record.startCommand ?? record.command ?? "").trim();
+                    if (!startCommand) throw new ProjectError(400, "缺少启动命令");
+                    if (startCommand.length > 2000) throw new ProjectError(400, "启动命令过长");
+                    const type = isProjectType(record.type) ? record.type : "custom";
+                    const intro = parseProjectIntro(record.intro);
+                    const gitUrl = parseGitUrl(record.gitUrl);
+                    const folder = parseProjectFolder(record.folder);
+                    const commands = parseRunCommands(record.runCommands ?? record.commands);
+                    const links = parseProjectLinks(record.links);
+                    const projectId = createProjectWithCommands(
+                        name,
+                        projectPath,
+                        type,
+                        startCommand,
+                        folder,
+                        intro,
+                        gitUrl,
+                        request.user?.userId ?? null,
+                        commands,
+                        links
+                    );
+                    if (record.quickstart === true) {
+                        insertQuickstartStmt.run(projectId, formatDateTime());
+                    }
+                    existingPaths.add(normalizePathKey(projectPath));
+                    created.push({ id: projectId, name, path: projectPath });
+                    let isDirectory = false;
+                    try {
+                        isDirectory = fs.statSync(projectPath).isDirectory();
+                    } catch {
+                        /* 代码还没拉取到本机，导入后可用「拉取项目」补齐 */
+                    }
+                    if (!isDirectory) missing.push({ name, path: projectPath });
+                } catch (error) {
+                    failed.push({
+                        name: rawName || rawPath || "未命名项目",
+                        message: error instanceof Error ? error.message : "导入失败",
+                    });
+                }
+            }
+
+            logInfo(
+                `[projects] imported ${created.length} projects by ${request.user?.username || "unknown"}`
+            );
+            res.json({
+                res: true,
+                created: created.length,
+                skipped,
+                failed,
+                missing,
+                folders: importedFolders,
+            });
+        } catch (error) {
+            fail(res, error);
+        }
     });
 
     projectRouter.post("/folders", (req, res) => {
