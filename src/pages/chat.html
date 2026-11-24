@@ -38,6 +38,14 @@
 
             <div class="topbar-actions">
                 <span class="chat-user" id="chatUser">加载中…</span>
+                <button class="icon-btn hidden" id="statsBtn" type="button" title="会话用量" aria-label="会话用量">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="4" y1="20" x2="4" y2="11"></line>
+                        <line x1="10" y1="20" x2="10" y2="4"></line>
+                        <line x1="16" y1="20" x2="16" y2="8"></line>
+                        <line x1="22" y1="20" x2="22" y2="14"></line>
+                    </svg>
+                </button>
                 <button class="icon-btn hidden" id="llmSettingsBtn" type="button" title="模型设置" aria-label="模型设置">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <circle cx="12" cy="12" r="3"></circle>
@@ -136,6 +144,19 @@
                     <button class="btn btn-sm btn-primary" id="llmSaveBtn" type="submit">保存</button>
                 </footer>
             </form>
+        </div>
+    </div>
+
+    <div class="llm-modal hidden" id="statsModal">
+        <div class="llm-dialog">
+            <div class="llm-head">
+                <div>
+                    <span class="kicker">会话用量</span>
+                    <h2>Token 与缓存命中</h2>
+                </div>
+                <button class="llm-close" id="statsCloseBtn" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="stats-body" id="statsBody"></div>
         </div>
     </div>
 

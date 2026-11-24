@@ -27,6 +27,10 @@
         attachList: document.getElementById("attachList"),
         dropMask: document.getElementById("dropMask"),
         llmSettingsBtn: document.getElementById("llmSettingsBtn"),
+        statsBtn: document.getElementById("statsBtn"),
+        statsModal: document.getElementById("statsModal"),
+        statsCloseBtn: document.getElementById("statsCloseBtn"),
+        statsBody: document.getElementById("statsBody"),
         llmModal: document.getElementById("llmModal"),
         llmCloseBtn: document.getElementById("llmCloseBtn"),
         llmStatus: document.getElementById("llmStatus"),
@@ -67,6 +71,8 @@
         attachments: [],
         /** 正在上传的数量，大于 0 时不允许发送 */
         uploading: 0,
+        /** 当前会话的 token 统计，来自 /chat/sessions/:id/stats */
+        stats: null,
     };
 
     const node = (tag, className, text) => {
@@ -427,6 +433,10 @@
         if (message.interrupted) {
             wrap.appendChild(node("div", "msg-interrupted", "该回复被中断，内容可能不完整"));
         }
+        // 每轮消耗：刷新后与流式结束时走同一份数据
+        if (message.usage) {
+            wrap.appendChild(node("div", "msg-usage", usageSummary(message.usage, message.cacheHitRate)));
+        }
         return wrap;
     }
 
@@ -453,9 +463,147 @@
     };
 
     function updateChatFoot() {
-        if (!state.tools) return;
+        if (!dom.chatFoot || !state.tools) return;
         const model = state.llm?.model || "未配置";
-        dom.chatFoot.textContent = `模型 ${model} · 可用工具 ${state.tools.visible}/${state.tools.total}`;
+        dom.chatFoot.replaceChildren();
+        dom.chatFoot.appendChild(
+            node("span", "chat-foot-line", `模型 ${model} · 可用工具 ${state.tools.visible}/${state.tools.total}`),
+        );
+
+        // 第二行是可点击的用量摘要，点开看逐轮明细
+        const totals = state.stats && state.stats.totals;
+        const usageLine = node("button", "chat-foot-usage");
+        usageLine.type = "button";
+        if (totals && totals.requests > 0) {
+            usageLine.textContent = `${usageSummary(totals, state.stats.cacheHitRate)} · ${totals.requests} 次请求`;
+            usageLine.title = "查看本会话的 token 消耗与逐轮明细";
+            usageLine.addEventListener("click", () => openStatsModal());
+        } else {
+            usageLine.textContent = "本会话暂无消耗";
+            usageLine.classList.add("is-empty");
+            usageLine.disabled = true;
+        }
+        dom.chatFoot.appendChild(usageLine);
+    }
+
+    // ---------- Token 统计 ----------
+
+    // 快速切会话时旧请求可能晚回，用序号丢弃过期结果
+    let statsRequestId = 0;
+
+    /** 1234 → 1.2k；小数量直接显示整数 */
+    function formatTokens(value) {
+        const count = Number(value) || 0;
+        if (count < 1000) return String(count);
+        if (count < 1000000) return `${(count / 1000).toFixed(count < 10000 ? 1 : 0)}k`;
+        return `${(count / 1000000).toFixed(2)}M`;
+    }
+
+    /** 命中率显示；null 表示 provider 没报缓存字段 */
+    function formatRate(rate) {
+        return typeof rate === "number" && Number.isFinite(rate) ? `${Math.round(rate * 100)}%` : "—";
+    }
+
+    /** ↑prompt ↓output · 命中 x% */
+    function usageSummary(usage, hitRate) {
+        if (!usage) return "";
+        const prompt = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
+        return `↑${formatTokens(prompt)} ↓${formatTokens(usage.outputTokens)} · 命中 ${formatRate(hitRate)}`;
+    }
+
+    async function loadStats() {
+        const requestId = ++statsRequestId;
+        if (!state.activeId) {
+            state.stats = null;
+            updateChatFoot();
+            return;
+        }
+        try {
+            const response = await Auth.apiFetch(`/chat/sessions/${encodeURIComponent(state.activeId)}/stats`);
+            const json = await Auth.parseJson(response);
+            if (!response.ok || !json.res) throw new Error(json.message || "读取用量失败");
+            if (requestId !== statsRequestId) return;
+            state.stats = json.stats || null;
+        } catch (error) {
+            if (requestId !== statsRequestId) return;
+            if (error.status !== 401) state.stats = null;
+        }
+        updateChatFoot();
+        if (dom.statsModal && !dom.statsModal.classList.contains("hidden")) renderStats();
+    }
+
+    function renderStats() {
+        if (!dom.statsBody) return;
+        dom.statsBody.replaceChildren();
+        const stats = state.stats;
+        const totals = stats && stats.totals;
+        if (!totals || totals.requests === 0) {
+            dom.statsBody.appendChild(
+                node("div", "stats-empty", "本会话还没有用量记录。发一条消息后这里会显示 token 与缓存命中。"),
+            );
+            return;
+        }
+
+        const cell = (label, value) => {
+            const box = node("div", "stats-cell");
+            box.append(node("span", "", label), node("strong", "", value));
+            return box;
+        };
+        const summary = node("div", "stats-summary");
+        summary.append(
+            cell("上下文 token", formatTokens(totals.contextTokens)),
+            cell("输出 token", formatTokens(totals.outputTokens)),
+            cell("缓存命中率", formatRate(stats.cacheHitRate)),
+            cell("请求次数", `${totals.requests} 次`),
+        );
+        dom.statsBody.appendChild(summary);
+
+        const turns = Array.isArray(stats.turns) ? stats.turns.slice().reverse() : [];
+        if (turns.length > 0) {
+            const scroll = node("div", "stats-scroll");
+            const table = document.createElement("table");
+            table.className = "stats-table";
+            const thead = document.createElement("thead");
+            const headRow = document.createElement("tr");
+            for (const label of ["时间", "上下文", "输出", "命中"]) {
+                headRow.appendChild(node("th", "", label));
+            }
+            thead.appendChild(headRow);
+            const tbody = document.createElement("tbody");
+            for (const turn of turns) {
+                const row = document.createElement("tr");
+                row.append(
+                    node("td", "", String(turn.createdAt || "").slice(0, 16)),
+                    node("td", "", formatTokens(turn.contextTokens)),
+                    node("td", "", formatTokens(turn.outputTokens)),
+                    node("td", "", formatRate(turn.cacheHitRate)),
+                );
+                tbody.appendChild(row);
+            }
+            table.append(thead, tbody);
+            scroll.appendChild(table);
+            dom.statsBody.appendChild(scroll);
+        }
+
+        dom.statsBody.appendChild(
+            node(
+                "p",
+                "stats-hint",
+                "命中率 = 缓存命中 / (未命中 + 命中 + 写入)，分母不含输出。数据来自 provider 返回的 usage；"
+                    + "未上报缓存字段时显示「—」。逐轮显示按助手消息归并，一次工具循环里的多次请求已合并。",
+            ),
+        );
+    }
+
+    function openStatsModal() {
+        if (!dom.statsModal) return;
+        renderStats();
+        dom.statsModal.classList.remove("hidden");
+        void loadStats();
+    }
+
+    function closeStatsModal() {
+        if (dom.statsModal) dom.statsModal.classList.add("hidden");
     }
 
     /** 把配置状态渲染进设置面板；接口只给掩码，页面拿不到明文 */
@@ -640,6 +788,8 @@
             renderSessions();
             renderMessages([]);
             dom.input.focus();
+            state.stats = null;
+            updateChatFoot();
             return json.session.id;
         } catch (error) {
             if (error.status === 401) return null;
@@ -659,8 +809,10 @@
             state.sessions = state.sessions.filter((item) => item.id !== id);
             if (state.activeId === id) {
                 state.activeId = null;
+                state.stats = null;
                 renderMessages([]);
                 dom.chatEmpty.classList.add("hidden");
+                updateChatFoot();
             }
             renderSessions();
         } catch (error) {
@@ -685,6 +837,7 @@
             if (error.status === 401) return;
             showNotice(error.message || "加载消息失败", "error");
         }
+        await loadStats();
     }
 
     // ---------- SSE ----------
@@ -869,10 +1022,13 @@
                             content: data.content || "",
                             toolCalls: data.toolCalls || [],
                             interrupted: data.interrupted === true,
+                            usage: data.usage || null,
+                            cacheHitRate: data.cacheHitRate ?? null,
                         }),
                     );
                     scrollToBottom(false);
                     void loadSessions();
+                    void loadStats();
                     return;
                 }
                 if (event === "error") {
@@ -927,6 +1083,11 @@
         dom.newSessionBtn.addEventListener("click", () => void createSession());
 
         dom.llmSettingsBtn.addEventListener("click", () => openLlmModal());
+        dom.statsBtn.addEventListener("click", () => openStatsModal());
+        dom.statsCloseBtn.addEventListener("click", () => closeStatsModal());
+        dom.statsModal.addEventListener("click", (event) => {
+            if (event.target === dom.statsModal) closeStatsModal();
+        });
         dom.llmCloseBtn.addEventListener("click", () => closeLlmModal());
         dom.llmForm.addEventListener("submit", (event) => void saveLlm(event));
         dom.llmTestBtn.addEventListener("click", () => void testLlm());
@@ -935,7 +1096,10 @@
             if (event.target === dom.llmModal) closeLlmModal();
         });
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") closeLlmModal();
+            if (event.key === "Escape") {
+                closeLlmModal();
+                closeStatsModal();
+            }
         });
 
         dom.composer.addEventListener("submit", (event) => {
@@ -1030,8 +1194,9 @@
             ? `${user.username} · ${ROLE_LABEL[user.role] || user.role}`
             : "未登录";
         dom.navAccountLink.classList.toggle("hidden", !user);
-        // 模型配置是全局资源，只有管理员能看到设置入口
+        // 模型配置是全局资源，只有管理员能看到设置入口；用量统计登录即可查看
         dom.llmSettingsBtn.classList.toggle("hidden", !user || user.role !== "admin");
+        dom.statsBtn.classList.toggle("hidden", !user);
         dom.chatFoot.textContent = user ? "正在读取助手配置…" : "—";
 
         if (!user) {

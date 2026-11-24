@@ -141,6 +141,120 @@ body.chat-body {
     line-height: 1.6;
 }
 
+.chat-foot-line {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* 用量行做成按钮：点开明细弹窗 */
+.chat-foot-usage {
+    display: block;
+    width: 100%;
+    margin-top: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-soft);
+    font: inherit;
+    font-size: 0.7rem;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+
+.chat-foot-usage:hover {
+    color: var(--green);
+}
+
+.chat-foot-usage.is-empty {
+    color: var(--muted);
+    cursor: default;
+}
+
+/* ---------- 会话用量 ---------- */
+
+.stats-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.stats-cell {
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-soft);
+}
+
+.stats-cell span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+
+.stats-cell strong {
+    display: block;
+    margin-top: 2px;
+    color: var(--text);
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.stats-scroll {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+}
+
+.stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+}
+
+.stats-table th {
+    position: sticky;
+    top: 0;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-soft);
+    color: var(--muted);
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.stats-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text-soft);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.stats-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.stats-empty {
+    padding: 14px;
+    color: var(--muted);
+    font-size: 0.76rem;
+    text-align: center;
+}
+
+.stats-hint {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.7;
+}
+
 /* ---------- 主区 ---------- */
 
 .chat-main {
@@ -290,6 +404,15 @@ body.chat-body {
 .msg-interrupted {
     color: var(--amber);
     font-size: 0.7rem;
+}
+
+/* 助手消息的 token 用量：小字右对齐，不抢正文 */
+.msg-usage {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
 }
 
 /* ---------- 气泡里的 Markdown ---------- */

@@ -38,7 +38,9 @@
         streaming: false,
         attachments: [],
         noticeTimer: 0,
-        attachments_: 0
+        attachments_: 0,
+        /** 当前会话的 token 统计，由主进程代理 /chat/sessions/:id/stats */
+        stats: null
     };
 
     const FILE_ICON =
@@ -155,9 +157,57 @@
         }
         const model = state.llm && state.llm.model ? state.llm.model : "未配置模型";
         const configured = state.llm && state.llm.configured ? "" : "（未接入）";
-        dom.foot.textContent = state.offline
+        const headLine = state.offline
             ? "后台未运行，发送前请先启动后台"
             : `模型 ${model}${configured} · 双击桌宠可再次唤起`;
+
+        dom.foot.replaceChildren();
+        dom.foot.appendChild(node("span", "chat-foot-line", headLine));
+        const totals = state.stats && state.stats.totals;
+        if (totals && totals.requests > 0) {
+            dom.foot.appendChild(
+                node(
+                    "span",
+                    "chat-foot-usage",
+                    `${usageSummary(totals, state.stats.cacheHitRate)} · ${totals.requests} 次请求`
+                )
+            );
+        }
+    }
+
+    // ---------- Token 统计 ----------
+
+    // 切会话时旧请求可能晚回，用序号丢弃过期结果
+    let statsRequestId = 0;
+
+    function formatTokens(value) {
+        const count = Number(value) || 0;
+        if (count < 1000) return String(count);
+        if (count < 1000000) return `${(count / 1000).toFixed(count < 10000 ? 1 : 0)}k`;
+        return `${(count / 1000000).toFixed(2)}M`;
+    }
+
+    function formatRate(rate) {
+        return typeof rate === "number" && Number.isFinite(rate) ? `${Math.round(rate * 100)}%` : "—";
+    }
+
+    function usageSummary(usage, hitRate) {
+        if (!usage) return "";
+        const prompt = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
+        return `↑${formatTokens(prompt)} ↓${formatTokens(usage.outputTokens)} · 命中 ${formatRate(hitRate)}`;
+    }
+
+    async function loadStats() {
+        const requestId = ++statsRequestId;
+        if (!state.activeId) {
+            state.stats = null;
+            renderFoot(null);
+            return;
+        }
+        const result = await api.chatStats(state.activeId);
+        if (requestId !== statsRequestId) return;
+        state.stats = result && result.ok && result.json ? result.json.stats || null : null;
+        renderFoot(null);
     }
 
     // ---------- 附件 ----------
@@ -289,6 +339,9 @@
         if (message.interrupted) {
             wrap.appendChild(node("div", "msg-interrupted", "该回复被中断，内容可能不完整"));
         }
+        if (message.usage) {
+            wrap.appendChild(node("div", "msg-usage", usageSummary(message.usage, message.cacheHitRate)));
+        }
         return wrap;
     }
 
@@ -379,6 +432,7 @@
         const messages = result.json && Array.isArray(result.json.messages) ? result.json.messages : [];
         renderMessages(messages);
         if (messages.length === 0) renderEmptyPrompts();
+        await loadStats();
     }
 
     async function createSession() {
@@ -391,9 +445,11 @@
         const session = result.json.session;
         state.sessions.unshift(session);
         state.activeId = session.id;
+        state.stats = null;
         renderSessions();
         renderMessages([]);
         renderEmptyPrompts();
+        renderFoot(null);
         dom.input.focus();
         return session.id;
     }
@@ -409,9 +465,11 @@
         }
         state.sessions = state.sessions.filter((item) => item.id !== id);
         state.activeId = null;
+        state.stats = null;
         renderSessions();
         dom.messages.replaceChildren();
         renderEmptyPrompts();
+        renderFoot(null);
         if (state.sessions.length > 0) await openSession(state.sessions[0].id);
     }
 
@@ -534,10 +592,13 @@
                     buildAssistantMessage({
                         content: data.content || "",
                         toolCalls: data.toolCalls || [],
-                        interrupted: data.interrupted === true
+                        interrupted: data.interrupted === true,
+                        usage: data.usage || null,
+                        cacheHitRate: data.cacheHitRate === undefined ? null : data.cacheHitRate
                     })
                 );
                 scrollToBottom(false);
+                void loadStats();
                 return;
             }
             if (event === "error") {

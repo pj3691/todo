@@ -23,7 +23,7 @@ import {
   type UserRole,
 } from "./mcp/define-tool.js";
 import { allTools } from "./mcp/tools/index.js";
-import { formatLocalDateTime, weekdayOf } from "./mcp/tools/time.js";
+import { formatLocalDate, weekdayOf } from "./mcp/tools/time.js";
 import { createLlmStore, type LlmConfig } from "./chat-llm.js";
 import {
   BLOCKED_FILE_EXTENSIONS,
@@ -74,10 +74,41 @@ type StoredToolCall = {
   isError: boolean;
 };
 
+/**
+ * 工具循环里的一轮模型发言。
+ *
+ * 一个用户问题可能触发多次模型调用（调用工具→拿结果→再调），
+ * 请求时的消息序列是「assistant + 其 tool 结果」交替排列。
+ * 只存一坨合并后的内容，下一轮重建时结构就变了，前缀缓存会在那一条上断开。
+ * 所以按轮记录分组，重建时逐字节还原。
+ */
+type LlmRound = {
+  /** 这一轮模型说的文本，可能为空（纯工具调用） */
+  content: string;
+  /** 这一轮发起、且已完成落库的工具调用 id，按原顺序 */
+  callIds: string[];
+};
+
+/**
+ * 一次请求的 token 用量，四桶口径与 DSH 的 TokenUsage 一致。
+ * inputTokens 只算「未命中缓存的输入」，cacheReadTokens 单独记，
+ * 两者相加才是 prompt 全长——直接把 prompt_tokens 当 input 会把命中部分重复计算。
+ */
+type LlmUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** 本消息内实际发出的请求次数：工具循环会多次调用模型 */
+  requests: number;
+};
+
 type MessagePayload = {
   toolCalls?: StoredToolCall[];
+  /** 本轮的工具调用分组，重建上下文时用来还原请求时的消息结构 */
+  rounds?: LlmRound[];
   interrupted?: boolean;
-  usage?: { prompt: number; completion: number } | null;
+  usage?: LlmUsage | null;
   /** 用户消息携带的附件快照，模型与页面都靠它拿到编号 */
   attachments?: ChatAttachmentRef[];
 };
@@ -138,12 +169,117 @@ const SYSTEM_PROMPT = [
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** 把存储的工具调用转成 OpenAI 请求里的 tool_calls 项 */
+const toOpenAiToolCall = (call: { id: string; name: string; arguments: string }) => ({
+  id: call.id,
+  type: "function",
+  function: { name: call.name, arguments: call.arguments || "{}" },
+});
+
 /** 截断过长的工具输出，保留首尾便于模型理解 */
 const clampToolContent = (text: string): string => {
   if (text.length <= TOOL_CONTENT_LIMIT) return text;
   const head = text.slice(0, TOOL_CONTENT_LIMIT - 500);
   const tail = text.slice(-400);
   return `${head}\n…[已截断 ${text.length - TOOL_CONTENT_LIMIT} 字]\n${tail}`;
+};
+
+/** 非负整数取值；缺失或非法一律当作 0，避免 NaN 污染累计值 */
+const usageNumber = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+
+/**
+ * 把 provider 的原始 usage 归一化成四个桶。
+ *
+ * DeepSeek 的 prompt_tokens 已经包含命中与未命中两部分，所以不能直接当 input；
+ * 优先读显式的 miss/hit 字段，缺失时再用 prompt_tokens − 命中 − 写入反推。
+ * OpenAI 风格则把命中放在 prompt_tokens_details.cached_tokens 里。
+ */
+const normalizeUsage = (raw: Record<string, unknown>): LlmUsage => {
+  const promptTotal = usageNumber(raw.prompt_tokens) || usageNumber(raw.input_tokens);
+  const outputTokens = usageNumber(raw.completion_tokens) || usageNumber(raw.output_tokens);
+  const promptDetails = isRecord(raw.prompt_tokens_details) ? raw.prompt_tokens_details : {};
+  const inputDetails = isRecord(raw.input_tokens_details) ? raw.input_tokens_details : {};
+
+  const cacheReadTokens =
+    usageNumber(raw.prompt_cache_hit_tokens) ||
+    usageNumber(promptDetails.cached_tokens) ||
+    usageNumber(raw.cache_read_input_tokens);
+  const cacheWriteTokens =
+    usageNumber(raw.prompt_cache_write_tokens) ||
+    usageNumber(inputDetails.cache_creation_tokens) ||
+    usageNumber(raw.cache_creation_input_tokens);
+
+  const explicitMiss = usageNumber(raw.prompt_cache_miss_tokens);
+  const inputTokens =
+    explicitMiss > 0
+      ? explicitMiss
+      : Math.max(0, promptTotal - cacheReadTokens - cacheWriteTokens);
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    requests: 1,
+  };
+};
+
+/** 累加同一轮里多次模型调用的用量 */
+const mergeUsage = (total: LlmUsage | null, next: LlmUsage): LlmUsage => ({
+  inputTokens: (total?.inputTokens ?? 0) + next.inputTokens,
+  outputTokens: (total?.outputTokens ?? 0) + next.outputTokens,
+  cacheReadTokens: (total?.cacheReadTokens ?? 0) + next.cacheReadTokens,
+  cacheWriteTokens: (total?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
+  requests: (total?.requests ?? 0) + next.requests,
+});
+
+/**
+ * 从落库 payload 里取用量。
+ * 落库的是已经归一化过的四桶（见 normalizeUsage），这里不能再把它当 provider 原始字段解析一遍；
+ * 同时兼容早期的 {prompt, completion} 两桶数据。
+ */
+const usageFromPayload = (payload: MessagePayload): LlmUsage | null => {
+  const raw: unknown = payload.usage;
+  if (!isRecord(raw)) return null;
+
+  // 当前格式：四桶已在落库前归一化
+  if (typeof raw.inputTokens === "number" || typeof raw.cacheReadTokens === "number") {
+    const usage: LlmUsage = {
+      inputTokens: usageNumber(raw.inputTokens),
+      outputTokens: usageNumber(raw.outputTokens),
+      cacheReadTokens: usageNumber(raw.cacheReadTokens),
+      cacheWriteTokens: usageNumber(raw.cacheWriteTokens),
+      requests: usageNumber(raw.requests) || 1,
+    };
+    const total = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens;
+    return total > 0 ? usage : null;
+  }
+
+  // 历史格式：只有 prompt / completion，没有缓存桶
+  if (typeof raw.prompt === "number" || typeof raw.completion === "number") {
+    return {
+      inputTokens: usageNumber(raw.prompt),
+      outputTokens: usageNumber(raw.completion),
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      requests: 1,
+    };
+  }
+
+  return null;
+};
+
+/** prompt 侧总长度：未命中 + 命中 + 写入三者不重叠 */
+const usageContextTokens = (usage: LlmUsage): number =>
+  usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+
+/** 缓存命中率；provider 没报缓存桶时返回 null，而不是 0 */
+const usageCacheHitRate = (usage: LlmUsage): number | null => {
+  const context = usageContextTokens(usage);
+  if (context <= 0) return null;
+  if (usage.cacheReadTokens <= 0 && usage.cacheWriteTokens <= 0) return null;
+  return Math.min(1, usage.cacheReadTokens / context);
 };
 
 /** 配置解析与凭据存储已移到 chat-llm.ts，这里只负责调用 */
@@ -337,13 +473,14 @@ export const registerChatFeature = (
 
   /** 用已落库的消息重建 OpenAI 上下文 */
   const buildMessages = (sessionId: string): Array<Record<string, unknown>> => {
-    // 模型自己没有时钟：system 里直接给一份当前时刻，省掉一次工具往返；
-    // 每次发消息都会重建，所以时间始终是本次请求的
+    // system 是前缀缓存的最开头，必须逐字节稳定：
+    // 之前这里拼了精确到秒的时间，导致每轮请求的缓存从第一个字就失效，命中率恒为 0。
+    // 因此只放日期（每天变一次），精确时刻交给 gitstatus_now 工具。
     const now = new Date();
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
-    const timeLine = `当前服务器时间：${formatLocalDateTime(now)}（${weekdayOf(now)}），时区 ${timeZone}。`;
+    const dateLine = `今天是 ${formatLocalDate(now)}（${weekdayOf(now)}），时区 ${timeZone}。需要精确到分钟的时刻时调用 gitstatus_now。`;
     const messages: Array<Record<string, unknown>> = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n${timeLine}` },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\n${dateLine}` },
     ];
     const rows = listMessagesStmt.all(sessionId) as ChatMessageRow[];
 
@@ -364,19 +501,40 @@ export const registerChatFeature = (
         payload = {};
       }
       const toolCalls = Array.isArray(payload.toolCalls) ? payload.toolCalls : [];
+      const rounds = Array.isArray(payload.rounds) ? payload.rounds : [];
 
+      // 有分组记录时按请求时的真实结构还原：assistant 与它的 tool 结果交替出现。
+      // 这是前缀缓存能命中后续轮次的前提。
+      if (rounds.length > 0) {
+        const byId = new Map(toolCalls.map((call) => [call.id, call]));
+        for (const round of rounds) {
+          const ids = Array.isArray(round.callIds) ? round.callIds : [];
+          const calls = ids
+            .map((id) => byId.get(id))
+            .filter((call): call is StoredToolCall => call !== undefined);
+          const text = typeof round.content === "string" ? round.content : "";
+          if (!text && calls.length === 0) continue;
+          messages.push({
+            role: "assistant",
+            content: text || null,
+            ...(calls.length > 0 ? { tool_calls: calls.map(toOpenAiToolCall) } : {}),
+          });
+          for (const call of calls) {
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: clampToolContent(call.content || "[本次调用被中断，没有结果]"),
+            });
+          }
+        }
+        continue;
+      }
+
+      // 历史数据没有 rounds：退化成一条 assistant + 平铺的工具结果
       messages.push({
         role: "assistant",
         content: row.content || null,
-        ...(toolCalls.length > 0
-          ? {
-              tool_calls: toolCalls.map((call) => ({
-                id: call.id,
-                type: "function",
-                function: { name: call.name, arguments: call.arguments || "{}" },
-              })),
-            }
-          : {}),
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls.map(toOpenAiToolCall) } : {}),
       });
 
       // 中断的调用没有结果，补一条占位，否则上下文不成立
@@ -398,7 +556,7 @@ export const registerChatFeature = (
     content: string;
     toolCalls: LlmToolCall[];
     finishReason: string;
-    usage: { prompt: number; completion: number } | null;
+    usage: LlmUsage | null;
   };
 
   /** 调一次 LLM，按 SSE 增量回调文本；返回完整内容与工具调用 */
@@ -455,10 +613,7 @@ export const registerChatFeature = (
       if (!isRecord(chunk)) return false;
 
       if (isRecord(chunk.usage)) {
-        usage = {
-          prompt: Number(chunk.usage.prompt_tokens) || 0,
-          completion: Number(chunk.usage.completion_tokens) || 0,
-        };
+        usage = normalizeUsage(chunk.usage);
       }
 
       const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
@@ -803,6 +958,7 @@ export const registerChatFeature = (
       session: { id: session.id, title: session.title, model: session.model },
       messages: rows.map((row) => {
         const payload = parseMessagePayload(row.payload);
+        const usage = usageFromPayload(payload);
         return {
           id: row.id,
           role: row.role,
@@ -811,9 +967,59 @@ export const registerChatFeature = (
           interrupted: payload.interrupted ?? false,
           // 用户消息的附件快照，用于刷新后仍然展示原文件名与大小
           attachments: payload.attachments ?? [],
+          // 助手消息的 token 用量与命中率，刷新后仍能展示历史消耗
+          usage,
+          cacheHitRate: usage === null ? null : usageCacheHitRate(usage),
           createdAt: row.created_at,
         };
       }),
+    });
+  });
+
+  /**
+   * 会话级 token 统计。
+   * 逐轮明细按消息粒度给出，合计按四桶累加；命中率用「命中 / (未命中+命中+写入)」，
+   * 与 DSH 的口径一致，分母不含输出。
+   */
+  chatRouter.get("/sessions/:id/stats", (req, res) => {
+    const user = (req as express.Request & { user?: { userId: number } }).user;
+    const session = getSessionStmt.get(String(req.params.id), user?.userId ?? 0) as
+      | ChatSessionRow
+      | undefined;
+    if (!session) {
+      res.status(404).json({ res: false, message: "session not found" });
+      return;
+    }
+    const rows = listMessagesStmt.all(session.id) as ChatMessageRow[];
+    let totals: LlmUsage | null = null;
+    const turns: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      if (row.role !== "assistant") continue;
+      const usage = usageFromPayload(parseMessagePayload(row.payload));
+      if (usage === null) continue;
+      totals = totals === null ? usage : mergeUsage(totals, usage);
+      turns.push({
+        id: row.id,
+        createdAt: row.created_at,
+        ...usage,
+        contextTokens: usageContextTokens(usage),
+        cacheHitRate: usageCacheHitRate(usage),
+      });
+    }
+    const totalUsage = totals ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      requests: 0,
+    };
+    res.json({
+      res: true,
+      stats: {
+        totals: { ...totalUsage, contextTokens: usageContextTokens(totalUsage) },
+        cacheHitRate: usageCacheHitRate(totalUsage),
+        turns,
+      },
     });
   });
 
@@ -992,6 +1198,8 @@ export const registerChatFeature = (
     const messages = buildMessages(sessionId);
 
     const storedCalls: StoredToolCall[] = [];
+    // 按轮记录消息结构，与请求时的序列一一对应；重建上下文靠它保持前缀稳定
+    const rounds: LlmRound[] = [];
     let answer = "";
     let usage: LlmStreamResult["usage"] = null;
     let interrupted = false;
@@ -1006,21 +1214,23 @@ export const registerChatFeature = (
           AbortSignal.any([controller.signal, AbortSignal.timeout(config.timeoutMs)]),
         );
         answer += result.content;
-        if (result.usage) usage = result.usage;
+        // 工具循环会对同一个问题多次请求模型，每次都要算进去；覆盖会丢掉前几轮的输入
+        if (result.usage) usage = mergeUsage(usage, result.usage);
 
-        if (result.toolCalls.length === 0) break;
+        if (result.toolCalls.length === 0) {
+          // 最终回答也要单独记一轮：下一轮重建时模型得知道自己上一轮说了什么
+          rounds.push({ content: result.content, callIds: [] });
+          break;
+        }
 
         // 模型要求调用工具：先把它这轮的发言与调用意图写进上下文
         messages.push({
           role: "assistant",
           content: result.content || null,
-          tool_calls: result.toolCalls.map((call) => ({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: call.arguments || "{}" },
-          })),
+          tool_calls: result.toolCalls.map(toOpenAiToolCall),
         });
 
+        const roundCallIds: string[] = [];
         for (const call of result.toolCalls) {
           const tool = registry.get(call.name);
           const toolTitle = tool?.title ?? call.name;
@@ -1065,7 +1275,10 @@ export const registerChatFeature = (
             isError,
           });
           messages.push({ role: "tool", tool_call_id: call.id, content: toolContent });
+          roundCallIds.push(call.id);
         }
+        // 这一轮实际完成了几条工具调用才记几条：中断时缺结果的调用不写入分组
+        rounds.push({ content: result.content, callIds: roundCallIds });
       }
 
       if (controller.signal.aborted) interrupted = true;
@@ -1074,7 +1287,7 @@ export const registerChatFeature = (
         sessionId,
         "assistant",
         answer,
-        JSON.stringify({ toolCalls: storedCalls, interrupted, usage } satisfies MessagePayload),
+        JSON.stringify({ toolCalls: storedCalls, rounds, interrupted, usage } satisfies MessagePayload),
       ).lastInsertRowid;
       touchSessionStmt.run(sessionId);
       send("done", {
@@ -1090,6 +1303,8 @@ export const registerChatFeature = (
         })),
         interrupted,
         usage,
+        // 前端流式渲染时不用再算一遍命中率
+        cacheHitRate: usage === null ? null : usageCacheHitRate(usage),
       });
       logInfo(`[chat] session ${sessionId} answered (tools=${storedCalls.length}, interrupted=${interrupted})`);
     } catch (error) {
@@ -1104,6 +1319,7 @@ export const registerChatFeature = (
           answer,
           JSON.stringify({
             toolCalls: storedCalls,
+            rounds,
             interrupted: wasAborted,
             usage,
           } satisfies MessagePayload),

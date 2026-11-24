@@ -279,6 +279,15 @@ body {
     font-size: 0.68rem;
 }
 
+/* 每轮 token 用量，小字右对齐 */
+.msg-usage {
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 0.64rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
 .msg-attachments {
     display: flex;
     flex-wrap: wrap;
@@ -697,7 +706,19 @@ body {
     padding: 0 13px 9px;
     color: var(--muted);
     font-size: 0.64rem;
-    white-space: nowrap;
+}
+
+/* 两行：模型/入口提示 + 本会话用量；各自省略，不互相挤掉 */
+.chat-foot-line,
+.chat-foot-usage {
+    display: block;
     overflow: hidden;
+    white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.chat-foot-usage {
+    margin-top: 1px;
+    color: var(--text-soft);
+    font-variant-numeric: tabular-nums;
 }

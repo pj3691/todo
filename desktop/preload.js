@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
     chatGetState: () => ipcRenderer.invoke("chat:get-state"),
     chatCreateSession: () => ipcRenderer.invoke("chat:create"),
     chatMessages: (id) => ipcRenderer.invoke("chat:messages", String(id || "")),
+    chatStats: (id) => ipcRenderer.invoke("chat:stats", String(id || "")),
     chatDeleteSession: (id) => ipcRenderer.invoke("chat:delete", String(id || "")),
     chatSend: (payload) => ipcRenderer.invoke("chat:send", payload || {}),
     chatStop: () => ipcRenderer.send("chat:stop"),

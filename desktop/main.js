@@ -2537,6 +2537,10 @@ function registerIpc() {
         if (!senderIs(event, chatWin)) return { ok: false };
         return chatRequest("GET", `/sessions/${encodeURIComponent(String(id))}/messages`);
     });
+    ipcMain.handle("chat:stats", async (event, id) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        return chatRequest("GET", `/sessions/${encodeURIComponent(String(id))}/stats`);
+    });
     ipcMain.handle("chat:delete", async (event, id) => {
         if (!senderIs(event, chatWin)) return { ok: false };
         return chatRequest("DELETE", `/sessions/${encodeURIComponent(String(id))}`);
