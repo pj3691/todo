@@ -5,7 +5,10 @@
   ],
   "ext": "ts,js,json,html",
   "ignore": [
-    "node_modules"
+    "node_modules",
+    "node_modules/**",
+    "src/output",
+    "src/output/**"
   ],
   "exec": "npx kill-port 30012 && npx tsx src/index.ts",
   "signal": "SIGTERM"

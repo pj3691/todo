@@ -157,6 +157,7 @@
         selectedLinks: new Map(),
         defaultEditors: loadDefaultEditors(),
         defaultFolderEditors: loadDefaultFolderEditors(),
+        cloningProjectId: null,
         usage: [],
         usageAvailable: true,
         usageLoading: false,
@@ -222,6 +223,8 @@
         projectModalTitle: document.getElementById("projectModalTitle"),
         projectPath: document.getElementById("projectPath"),
         projectName: document.getElementById("projectName"),
+        projectGitUrl: document.getElementById("projectGitUrl"),
+        detectGitUrlBtn: document.getElementById("detectGitUrlBtn"),
         projectType: document.getElementById("projectType"),
         projectFolder: document.getElementById("projectFolder"),
         projectFolderOptions: document.getElementById("projectFolderOptions"),
@@ -240,6 +243,17 @@
         cancelProjectBtn: document.getElementById("cancelProjectBtn"),
         saveProjectBtn: document.getElementById("saveProjectBtn"),
         folderModal: document.getElementById("folderModal"),
+        cloneProjectBtn: document.getElementById("cloneProjectBtn"),
+        cloneProjectModal: document.getElementById("cloneProjectModal"),
+        cloneProjectForm: document.getElementById("cloneProjectForm"),
+        cloneGitUrl: document.getElementById("cloneGitUrl"),
+        cloneTargetDir: document.getElementById("cloneTargetDir"),
+        cloneTargetHint: document.getElementById("cloneTargetHint"),
+        cloneProjectError: document.getElementById("cloneProjectError"),
+        pickCloneTargetDirBtn: document.getElementById("pickCloneTargetDirBtn"),
+        confirmCloneProjectBtn: document.getElementById("confirmCloneProjectBtn"),
+        closeCloneProjectModalBtn: document.getElementById("closeCloneProjectModalBtn"),
+        cancelCloneProjectBtn: document.getElementById("cancelCloneProjectBtn"),
         folderForm: document.getElementById("folderForm"),
         folderModalKicker: document.getElementById("folderModalKicker"),
         folderModalTitle: document.getElementById("folderModalTitle"),
@@ -710,6 +724,7 @@
         const runCommands = Array.isArray(project.runCommands) ? project.runCommands : [];
         const links = Array.isArray(project.links) ? project.links : [];
         const intro = String(project.intro || "").trim();
+        const gitUrl = String(project.gitUrl || "").trim();
         const typeLabel = TYPE_LABELS[project.type] || project.typeLabel || project.type || "自定义";
         const pid = project.pid ? `PID ${escapeHtml(project.pid)}` : "";
         const expanded = state.expandedProjects.has(projectId);
@@ -820,6 +835,9 @@
                 <div class="project-head-right">
                     <div class="project-head-topline">
                         <span class="status-pill ${status.className}" title="${escapeHtml(status.label)}">${escapeHtml(status.label)}</span>
+                        <button class="project-icon-btn project-insight-btn" type="button" data-action="insight" title="查看 Git 洞察" aria-label="查看 Git 洞察">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"></path><polyline points="7 14 11 10 15 13 21 6"></polyline></svg>
+                        </button>
                         <button class="project-icon-btn project-edit-btn" type="button" data-action="edit" title="编辑项目" aria-label="编辑项目">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
                         </button>
@@ -879,6 +897,9 @@
                     <button class="project-icon-btn project-restart-toggle" type="button" data-action="restart" title="重启项目" aria-label="重启项目"${canRestart ? "" : " disabled"}>
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5"></path><path d="M20 4v7h-7"></path></svg>
                     </button>
+                    <button class="project-icon-btn project-pull-btn" type="button" data-action="pull" title="拉取项目到本机" aria-label="拉取项目到本机">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+                    </button>
                 </div>
                 <div class="project-quick-run">
                     ${commandMenuHtml}
@@ -896,6 +917,10 @@
                         <span class="project-detail-label">进程</span>
                         <span class="project-detail-value">${pid || "未运行"}</span>
                     </div>
+                    ${gitUrl ? `<div class="project-detail-item">
+                        <span class="project-detail-label">Git 远程</span>
+                        <code class="project-start-command" title="${escapeHtml(gitUrl)}">${escapeHtml(gitUrl)}</code>
+                    </div>` : ""}
                 </div>
                 ${introHtml}
                 <div class="project-detail-section">
@@ -904,6 +929,7 @@
                 </div>
                 <div class="project-detail-actions">
                     <button class="btn btn-sm" type="button" data-action="terminal">启动终端</button>
+                    <button class="btn btn-sm" type="button" data-action="pull">拉取项目</button>
                     <button class="btn btn-sm" type="button" data-action="edit">编辑</button>
                     <button class="btn btn-sm btn-danger" type="button" data-action="delete">删除</button>
                 </div>
@@ -1577,6 +1603,61 @@
         }
     }
 
+    // 项目路径与 Git 洞察仓库地址比对时忽略大小写、斜杠方向和末尾斜杠
+    const normalizeRepoPath = (value) =>
+        String(value || "").trim().replace(/\\+/g, "/").replace(/\/+$/, "").toLowerCase();
+
+    async function findInsightRepoByPath(projectPath) {
+        const json = await api("/repos");
+        const target = normalizeRepoPath(projectPath);
+        return (Array.isArray(json.repos) ? json.repos : [])
+            .find((repo) => normalizeRepoPath(repo.url) === target) || null;
+    }
+
+    // 把项目地址交给 Git 洞察：已收录的仓库直接打开，未收录的创建后跳转
+    async function openProjectInsight(projectId, button) {
+        const project = projectById(projectId);
+        if (!project) return;
+        const projectPath = String(project.path || "").trim();
+        if (!projectPath) {
+            showToast("项目还没有填写地址，无法生成洞察", "warning");
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            const existing = await findInsightRepoByPath(projectPath);
+            if (existing) {
+                window.location.href = `/pages/index.html?repo=${Number(existing.id)}`;
+                return;
+            }
+            if (!Auth.hasRole(state.user?.role, "readwrite")) {
+                showToast("当前账号为只读权限，无法把项目加入 Git 洞察", "warning");
+                return;
+            }
+            showToast("正在读取提交历史，首次添加可能需要一会儿");
+            const created = await api("/repos", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: project.name || projectPath, url: projectPath }),
+            });
+            const repoId = Number(created.repo?.id);
+            if (!repoId) throw new Error("未获取到新建仓库编号");
+            window.location.href = `/pages/index.html?repo=${repoId}`;
+        } catch (error) {
+            // 多个入口同时添加同一路径时后端会以 409 拒绝，复查到已有仓库就直接打开
+            if (error.status === 409) {
+                const existing = await findInsightRepoByPath(projectPath).catch(() => null);
+                if (existing) {
+                    window.location.href = `/pages/index.html?repo=${Number(existing.id)}`;
+                    return;
+                }
+            }
+            handleActionError(error, "打开 Git 洞察失败");
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
     async function deleteProject(projectId) {
         const project = projectById(projectId);
         if (!project) return;
@@ -1743,6 +1824,7 @@
         el.saveProjectBtn.textContent = project ? "保存修改" : "添加项目";
         el.projectPath.value = project?.path || "";
         el.projectName.value = project?.name || "";
+        el.projectGitUrl.value = project?.gitUrl || "";
         el.projectType.value = project?.type || "auto";
         el.projectFolder.value = project?.folder || presetFolder;
         refreshFolderOptions();
@@ -1822,6 +1904,152 @@
         }
     }
 
+    // 从所选项目目录读取 origin 远程地址，识别不到时允许手动填写
+    async function detectGitUrl() {
+        const projectPath = el.projectPath.value.trim();
+        if (!projectPath) {
+            showToast("请先填写项目地址", "warning");
+            el.projectPath.focus();
+            return;
+        }
+        el.detectGitUrlBtn.disabled = true;
+        const previousText = el.detectGitUrlBtn.textContent;
+        el.detectGitUrlBtn.textContent = "识别中…";
+        try {
+            const json = await api("/projects/detect-git", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: projectPath }),
+            });
+            if (json.url) {
+                el.projectGitUrl.value = json.url;
+                showToast("已识别 Git 远程地址");
+            } else {
+                showToast("未识别到 Git 远程地址，可以手动填写", "warning");
+            }
+        } catch (error) {
+            handleActionError(error, "识别 Git 远程地址失败");
+        } finally {
+            el.detectGitUrlBtn.disabled = false;
+            el.detectGitUrlBtn.textContent = previousText;
+        }
+    }
+
+    // 拉取项目：不带项目时拉取完成后直接添加；带项目时刷新该项目的本地地址
+    function openCloneProjectModal(project = null) {
+        if (project && ACTIVE_STATUSES.includes(project.status)) {
+            showToast("请先停止项目再拉取代码", "warning");
+            return;
+        }
+        state.cloningProjectId = project ? Number(project.id) : null;
+        el.cloneGitUrl.value = project?.gitUrl || "";
+        el.cloneTargetDir.value = "";
+        el.cloneTargetHint.textContent = project
+            ? "拉取完成后会用新目录更新这个项目的地址，并保留启动命令与运行命令"
+            : "会在所选文件夹下创建与仓库同名的子目录，子目录已存在且不为空时会中止";
+        el.cloneProjectError.textContent = "";
+        el.cloneProjectError.classList.add("hidden");
+        el.cloneProjectModal.classList.add("is-open");
+        el.cloneProjectModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("modal-open");
+        window.setTimeout(() => el.cloneGitUrl.focus(), 40);
+    }
+
+    function closeCloneProjectModal() {
+        el.cloneProjectModal.classList.remove("is-open");
+        el.cloneProjectModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("modal-open");
+        state.cloningProjectId = null;
+    }
+
+    async function openAddProjectFromClone(cloned, url) {
+        const clonedPath = String(cloned.path || "");
+        if (!clonedPath) return;
+        const detection = cloned.detection || {};
+        try {
+            // 启动命令能自动识别时一步登记，否则回退到添加表单补齐
+            await api("/projects", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: cloned.name || detection.name || "",
+                    path: clonedPath,
+                    gitUrl: url,
+                }),
+            });
+            showToast("项目已拉取并添加");
+            await loadProjects();
+        } catch (error) {
+            openProjectModal();
+            el.projectPath.value = clonedPath;
+            el.projectGitUrl.value = url;
+            el.projectName.value = cloned.name || detection.name || "";
+            el.projectType.value = detection.type || "auto";
+            el.projectStartCommand.value = detection.startCommand || detection.command || "";
+            renderRunCommandRows(Array.isArray(detection.commands) ? detection.commands : []);
+            showToast(error.message || "代码已拉取，请补充启动命令后保存", "warning");
+        }
+    }
+
+    async function submitCloneProject(event) {
+        event.preventDefault();
+        const url = el.cloneGitUrl.value.trim();
+        const targetDir = el.cloneTargetDir.value.trim();
+        const showError = (message) => {
+            el.cloneProjectError.textContent = message;
+            el.cloneProjectError.classList.remove("hidden");
+        };
+        if (!url) {
+            showError("请输入 Git 远程地址");
+            el.cloneGitUrl.focus();
+            return;
+        }
+        if (!targetDir) {
+            showError("请选择拉取到的文件夹");
+            el.cloneTargetDir.focus();
+            return;
+        }
+        el.cloneProjectError.classList.add("hidden");
+        el.confirmCloneProjectBtn.disabled = true;
+        el.cancelCloneProjectBtn.disabled = true;
+        const previousText = el.confirmCloneProjectBtn.textContent;
+        el.confirmCloneProjectBtn.textContent = "拉取中…";
+        try {
+            const cloned = await api("/projects/clone", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url, targetDir }),
+            });
+            const project = state.cloningProjectId ? projectById(state.cloningProjectId) : null;
+            closeCloneProjectModal();
+            if (project) {
+                await api(`/projects/${project.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        name: project.name,
+                        folder: project.folder || "",
+                        intro: project.intro || "",
+                        path: cloned.path,
+                        startCommand: project.startCommand || project.command || "",
+                        gitUrl: url,
+                    }),
+                });
+                showToast("已拉取并更新项目地址");
+                await loadProjects();
+                return;
+            }
+            showToast(`已拉取到 ${cloned.path || targetDir}`);
+            await openAddProjectFromClone(cloned, url);
+        } catch (error) {
+            showError(error.message || "拉取项目失败");
+        } finally {
+            el.confirmCloneProjectBtn.disabled = false;
+            el.cancelCloneProjectBtn.disabled = false;
+            el.confirmCloneProjectBtn.textContent = previousText;
+        }
+    }
+
     async function saveProject(event) {
         event.preventDefault();
         const projectPath = el.projectPath.value.trim();
@@ -1852,6 +2080,7 @@
             folder: el.projectFolder.value.trim(),
             intro,
             links,
+            gitUrl: el.projectGitUrl.value.trim(),
         };
         // 运行中的项目不提交启动配置，避免后端判定为修改启动命令
         if (!launchLocked) {
@@ -2361,12 +2590,18 @@
         el.addProjectBtn.addEventListener("click", () => openProjectModal());
         el.emptyAddProjectBtn.addEventListener("click", () => openProjectModal());
         el.addFolderBtn.addEventListener("click", () => openFolderModal());
+        el.cloneProjectBtn.addEventListener("click", () => openCloneProjectModal());
+        el.closeCloneProjectModalBtn.addEventListener("click", closeCloneProjectModal);
+        el.cancelCloneProjectBtn.addEventListener("click", closeCloneProjectModal);
+        el.cloneProjectForm.addEventListener("submit", submitCloneProject);
+        el.pickCloneTargetDirBtn.addEventListener("click", () => void pickFolderInto(el.cloneTargetDir, el.pickCloneTargetDirBtn));
         el.closeFolderModalBtn.addEventListener("click", closeFolderModal);
         el.cancelFolderBtn.addEventListener("click", closeFolderModal);
         el.folderForm.addEventListener("submit", saveFolder);
         el.closeProjectModalBtn.addEventListener("click", closeProjectModal);
         el.cancelProjectBtn.addEventListener("click", closeProjectModal);
         el.detectProjectBtn.addEventListener("click", () => void detectProject());
+        el.detectGitUrlBtn.addEventListener("click", () => void detectGitUrl());
         el.pickProjectPathBtn.addEventListener("click", () => void pickFolderInto(el.projectPath, el.pickProjectPathBtn));
         el.pickFolderPathBtn.addEventListener("click", () => void pickFolderInto(el.folderPath, el.pickFolderPathBtn));
         el.projectForm.addEventListener("submit", saveProject);
@@ -2425,6 +2660,9 @@
 
         el.projectModal.addEventListener("click", (event) => {
             if (event.target === el.projectModal) closeProjectModal();
+        });
+        el.cloneProjectModal.addEventListener("click", (event) => {
+            if (event.target === el.cloneProjectModal) closeCloneProjectModal();
         });
         el.folderModal.addEventListener("click", (event) => {
             if (event.target === el.folderModal) closeFolderModal();
@@ -2556,6 +2794,11 @@
             } else if (action === "run-command") {
                 closePickers();
                 void runProjectCommand(projectId, Number(button.dataset.commandId));
+            } else if (action === "insight") {
+                void openProjectInsight(projectId, button);
+            } else if (action === "pull") {
+                const project = projectById(projectId);
+                if (project) openCloneProjectModal(project);
             } else if (action === "edit") {
                 const project = projectById(projectId);
                 if (!project) return;

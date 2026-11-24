@@ -42,12 +42,10 @@
         /* 头部：与 todo 页的面板视觉保持一致 */
         .dashboard-header {
             position: relative;
-            background: rgba(255, 255, 255, 0.86);
+            background: rgba(255, 255, 255, 0.96);
             border: 1px solid var(--line);
             border-radius: var(--radius-lg);
             box-shadow: var(--shadow-sm);
-            -webkit-backdrop-filter: blur(10px);
-            backdrop-filter: blur(10px);
             padding: 20px 22px;
             margin-bottom: 22px;
         }
@@ -188,7 +186,20 @@
         /* 按钮统一使用共享组件样式：.btn / .btn-primary / .btn-ghost */
 
         /* 卡片：视觉来自共享 components.css，这里只保留折叠与表格布局 */
+        /* 本页内容长、卡片多，sticky 顶栏和卡片上的实时背景模糊在滚动时
+           每帧都要重算，桌面端软件合成下会明显掉帧；改用接近实色的背景 */
+        .topbar,
         .card {
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+        }
+
+        .topbar {
+            background: rgba(250, 252, 250, 0.97);
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.96);
             margin-bottom: 22px;
         }
 
@@ -350,6 +361,333 @@
             font-weight: 600;
         }
 
+        /* ---------- 提交历史筛选与排序 ---------- */
+        .commit-filters {
+            flex: 1 1 560px;
+            min-width: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .commit-filters .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .commit-filters .filter-label {
+            color: var(--muted);
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+
+        .commit-filters .file-filter-input,
+        .commit-filters .date-filter-input {
+            min-height: 32px;
+            border: 1px solid var(--line-strong);
+            border-radius: 10px;
+            padding: 4px 10px;
+            background: #fff;
+            color: var(--text);
+            font-size: 0.76rem;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        .commit-filters .file-filter-input {
+            width: 170px;
+        }
+
+        .commit-filters .date-filter-input {
+            width: 138px;
+            cursor: pointer;
+        }
+
+        .commit-filters .file-filter-input:hover,
+        .commit-filters .date-filter-input:hover {
+            border-color: #b8c8bc;
+        }
+
+        .commit-filters .file-filter-input:focus,
+        .commit-filters .date-filter-input:focus {
+            outline: none;
+            border-color: #73b38f;
+            box-shadow: 0 0 0 3px rgba(31, 122, 77, 0.11);
+        }
+
+        .commit-filters .filter-sep {
+            color: var(--muted);
+            font-size: 0.76rem;
+        }
+
+        /* 选择器带 .commit-filters 前缀，避免被 .card-header button 的 cursor 规则覆盖 */
+        .commit-filters .filter-quick-btn {
+            border: 1px solid var(--line-strong);
+            border-radius: 999px;
+            padding: 4px 10px;
+            background: #fff;
+            color: var(--muted);
+            font-size: 0.72rem;
+            line-height: 1.2;
+            cursor: pointer;
+            transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+        }
+
+        .commit-filters .filter-quick-btn:hover {
+            border-color: #73b38f;
+            color: var(--green-strong);
+        }
+
+        .commit-filters .filter-quick-btn.active {
+            border-color: var(--green-strong);
+            background: var(--green-strong);
+            color: #fff;
+        }
+
+        .filter-summary {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 2px;
+        }
+
+        .commit-filters .filter-clear-btn {
+            border: 1px solid var(--line-strong);
+            border-radius: 999px;
+            padding: 4px 10px;
+            background: #fff;
+            color: var(--red);
+            font-size: 0.72rem;
+            line-height: 1.2;
+            cursor: pointer;
+        }
+
+        .commit-filters .filter-clear-btn:hover {
+            border-color: var(--red);
+            background: var(--red-soft);
+        }
+
+        .data-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        .data-table th.sortable:hover {
+            color: var(--green-strong);
+        }
+
+        .sort-arrow {
+            margin-left: 4px;
+            color: var(--muted);
+            font-size: 0.62rem;
+        }
+
+        .commit-row {
+            cursor: pointer;
+        }
+
+        .commit-row.is-expanded td {
+            background: var(--surface-soft);
+        }
+
+        .message-cell {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .expand-icon {
+            flex: 0 0 auto;
+            color: var(--muted);
+            font-size: 0.62rem;
+        }
+
+        .message-text {
+            min-width: 0;
+        }
+
+        .file-details-row td {
+            padding: 0;
+            background: #f7faf7;
+        }
+
+        .file-details {
+            padding: 12px 16px;
+        }
+
+        .file-details h4 {
+            margin: 0 0 8px;
+            color: var(--text-soft);
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+
+        .file-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .file-name {
+            min-width: 0;
+            color: var(--text-soft);
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            word-break: break-all;
+        }
+
+        .file-changes {
+            flex: 0 0 auto;
+            display: flex;
+            gap: 10px;
+            font-size: 0.72rem;
+            font-weight: 650;
+        }
+
+        /* ---------- 作者贡献统计 ---------- */
+        .contributors-container {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .contributors-chart {
+            position: relative;
+            width: 100%;
+            height: 320px;
+        }
+
+        .contributors-chart canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+
+        .contributors-list {
+            border: 1px solid var(--line);
+            border-radius: var(--radius-md);
+            background: var(--surface-soft);
+            padding: 14px 16px;
+        }
+
+        .contributors-list h4 {
+            margin: 0 0 12px;
+            color: var(--text-soft);
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        .contributors-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .contributor-item {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: #fff;
+        }
+
+        .contributor-name {
+            color: var(--text);
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .contributor-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 0.7rem;
+        }
+
+        .contributor-percentage {
+            flex: 0 0 auto;
+            color: var(--green-strong);
+            font-size: 0.8rem;
+            font-weight: 750;
+        }
+
+        /* ---------- 右键菜单 / 页面提示 ---------- */
+        .context-menu-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 90;
+        }
+
+        .context-menu-panel {
+            position: fixed;
+            z-index: 91;
+            min-width: 160px;
+            padding: 4px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: var(--surface);
+            box-shadow: var(--shadow-md);
+        }
+
+        .context-menu-item {
+            width: 100%;
+            padding: 8px 12px;
+            border: 0;
+            border-radius: 7px;
+            background: transparent;
+            color: var(--text);
+            font-size: 0.76rem;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .context-menu-item:hover {
+            background: var(--surface-soft);
+        }
+
+        .page-toast {
+            position: fixed;
+            left: 50%;
+            top: 84px;
+            z-index: 120;
+            padding: 8px 16px;
+            border-radius: 999px;
+            background: rgba(31, 35, 40, 0.9);
+            color: #fff;
+            font-size: 0.76rem;
+            opacity: 0;
+            transform: translate(-50%, -6px);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .page-toast.is-visible {
+            opacity: 1;
+            transform: translate(-50%, 0);
+        }
+
         /* 曲线图容器 */
         .chart-container {
             position: relative;
@@ -476,7 +814,8 @@
             height: 18px;
             border-radius: 3px;
             background-color: #ebedf0;
-            transition: 0.1s ease;
+            /* 只过渡 hover 真正用到的属性，避免全属性过渡带来的额外合成 */
+            transition: transform 0.1s ease, box-shadow 0.1s ease;
             cursor: pointer;
         }
 
@@ -487,7 +826,8 @@
         }
 
         .tooltip-heat {
-            position: absolute;
+            position: fixed;
+            display: none;
             background: #1f2328cc;
             color: white;
             padding: 4px 8px;
@@ -510,6 +850,29 @@
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 12px;
+            }
+
+            /* 窄屏下筛选区改为纵向铺满，避免 flex-basis 在列方向捧高头部 */
+            .commit-filters {
+                flex: 1 1 auto;
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .commit-filters .filter-group {
+                width: 100%;
+            }
+
+            .commit-filters .file-filter-input {
+                flex: 1 1 auto;
+                width: auto;
+                min-width: 0;
+            }
+
+            .commit-filters .date-filter-input {
+                flex: 1 1 auto;
+                width: auto;
+                min-width: 0;
             }
 
             .dashboard-header {
@@ -762,20 +1125,53 @@
         <div class="card">
             <div class="card-header">
                 <h2>📜 提交历史记录</h2>
+                <div class="commit-filters" id="commitFilters">
+                    <div class="filter-group">
+                        <span class="filter-label">日期</span>
+                        <input id="commitDateFrom" class="date-filter-input" type="date"
+                            title="起始日期（与结束日期相同即筛选某一天）" />
+                        <span class="filter-sep">~</span>
+                        <input id="commitDateTo" class="date-filter-input" type="date"
+                            title="结束日期（与起始日期相同即筛选某一天）" />
+                        <button type="button" class="filter-quick-btn" data-quick-days="1">今天</button>
+                        <button type="button" class="filter-quick-btn" data-quick-days="7">近7天</button>
+                        <button type="button" class="filter-quick-btn" data-quick-days="30">近30天</button>
+                        <button type="button" class="filter-quick-btn" data-quick-days="none">不限</button>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">描述</span>
+                        <input id="commitMessageFilter" class="file-filter-input" type="text"
+                            placeholder="模糊匹配提交描述..." />
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">Hash</span>
+                        <input id="commitHashFilter" class="file-filter-input hash-filter-input" type="text"
+                            placeholder="按 Hash 筛选..." />
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">文件</span>
+                        <input id="commitFileFilter" class="file-filter-input" type="text"
+                            placeholder="按文件名筛选提交..." />
+                    </div>
+                    <div class="filter-summary">
+                        <span class="badge-light" id="commitFilterCount">0 / 0 条</span>
+                        <button type="button" class="filter-clear-btn hidden" id="clearCommitFilters">✕ 清除筛选</button>
+                    </div>
+                </div>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
                     <table class="data-table" id="commitsTable">
                         <thead>
                             <tr>
-                                <th>Hash</th>
-                                <th>日期</th>
-                                <th>作者</th>
-                                <th>增加</th>
-                                <th>删除</th>
-                                <th>净增</th>
-                                <th>文件数</th>
-                                <th>描述</th>
+                                <th class="sortable" data-sort-key="hash">Hash <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="date">日期 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="author">作者 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="additions">增加 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="deletions">删除 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="net">净增 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="files">文件数 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-sort-key="message">描述 <span class="sort-arrow"></span></th>
                             </tr>
                         </thead>
                         <tbody id="commitTableBody">
@@ -821,12 +1217,12 @@
                     <table class="data-table stats-table" id="dailyStatsTable">
                         <thead>
                             <tr>
-                                <th>日期 (UTC+8)</th>
-                                <th>提交次数</th>
-                                <th>总增加</th>
-                                <th>总删除</th>
-                                <th>净增行数</th>
-                                <th>活跃指数</th>
+                                <th class="sortable" data-daily-sort-key="date">日期 (UTC+8) <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-daily-sort-key="commitsCount">提交次数 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-daily-sort-key="totalAdd">总增加 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-daily-sort-key="totalDel">总删除 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-daily-sort-key="net">净增行数 <span class="sort-arrow"></span></th>
+                                <th class="sortable" data-daily-sort-key="active">活跃指数 <span class="sort-arrow"></span></th>
                             </tr>
                         </thead>
                         <tbody id="dailyStatsBody">
@@ -847,8 +1243,32 @@
                 </div>
             </div>
         </div>
+
+        <!-- 作者贡献统计卡片 -->
+        <div class="card" id="contributorsCard">
+            <div class="card-header">
+                <h2>👥 作者贡献统计</h2>
+            </div>
+            <div class="card-body">
+                <div class="contributors-container">
+                    <div class="contributors-chart"><canvas id="contributorsChart"></canvas></div>
+                    <div class="contributors-list">
+                        <h4>贡献详情</h4>
+                        <div class="contributors-stats" id="contributorsList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <footer>基于 Git 日志聚合 | 分页表格 + 每日统计 + 趋势曲线 + 热力图 (年份切换)</footer>
     </main>
+
+    <!-- 提交行右键菜单：复制完整 Hash -->
+    <div id="commitContextMenu" class="context-menu-overlay hidden">
+        <div class="context-menu-panel" id="commitContextPanel">
+            <button type="button" class="context-menu-item" id="copyCommitHashBtn">📋 复制 Hash</button>
+        </div>
+    </div>
+    <div id="pageToast" class="page-toast" role="status" aria-live="polite"></div>
 
     <script>
         // ============================================================
@@ -1127,11 +1547,23 @@
         let gitCommits = [];          // 全量提交
         let dailyAggregated = [];     // 每日聚合 (全量)
         let trendChartInstance = null;
+        let contributorsChartInstance = null;
         let repos = [];
         let selectedRepoId = null;
         let repoEditorMode = null;
         let currentRepoData = { branches: [], commitsByBranch: {} };
         let selectedBranch = '';
+
+        // 提交历史筛选 / 排序 / 行展开状态
+        let commitFilters = { dateFrom: '', dateTo: '', message: '', hash: '', file: '' };
+        let commitSort = { key: 'date', direction: -1 };
+        let dailySort = { key: 'date', direction: -1 };
+        let filteredCommits = [];
+        let sortedCommitsCache = [];
+        const expandedCommitHashes = new Set();
+        let filterRefreshTimer = 0;
+        let commitContextHash = '';
+        let pageToastTimer = 0;
 
         // 分页状态
         let currentPage = 1;
@@ -1198,13 +1630,18 @@
             gitCommits = branchData;
             currentPage = 1;
             dailyCurrentPage = 1;
+            expandedCommitHashes.clear();
             dailyAggregated = aggregateDailyData(gitCommits);
+            applyCommitFilters();
+            sortedCommitsCache = getSortedCommits();
+            updateSortIndicators();
             updateTotalStats();
             renderCommitTable();
             renderPagination();
             renderDailyStatsTable();
             renderDailyPagination();
             renderTrendChart();
+            renderContributorsChart();
             populateYearSelect();
             updateRepoDisplay();
         }
@@ -1234,7 +1671,22 @@
                 selectedRepoId = repos[0].id;
             }
             select.value = String(selectedRepoId);
+            syncRepoQueryParam(selectedRepoId);
             updateRepoDisplay();
+        }
+        // 支持 /pages/index.html?repo=<id> 深链接：项目管理页的洞察按钮跳转过来时直接选中对应仓库
+        const readRepoIdFromQuery = () => {
+            const raw = new URLSearchParams(window.location.search).get('repo');
+            const id = Number(raw);
+            return Number.isInteger(id) && id > 0 ? id : null;
+        };
+        function syncRepoQueryParam(repoId) {
+            try {
+                const url = new URL(window.location.href);
+                if (repoId) url.searchParams.set('repo', String(repoId));
+                else url.searchParams.delete('repo');
+                window.history.replaceState(null, '', url);
+            } catch { /* 历史记录不可用时忽略 */ }
         }
         function updateRepoDisplay() {
             const urlDisplay = document.getElementById('repoDisplayUrl');
@@ -1327,12 +1779,20 @@
                 renderBranchFilterSelect([], '');
                 gitCommits = [];
                 dailyAggregated = [];
+                filteredCommits = [];
+                sortedCommitsCache = [];
+                expandedCommitHashes.clear();
+                currentPage = 1;
+                dailyCurrentPage = 1;
+                applyCommitFilters();
+                updateSortIndicators();
                 updateTotalStats();
                 renderCommitTable();
                 renderPagination();
                 renderDailyStatsTable();
                 renderDailyPagination();
                 renderTrendChart();
+                renderContributorsChart();
                 populateYearSelect();
                 return;
             }
@@ -1372,32 +1832,192 @@
             return result;
         }
 
-        // 渲染提交表格
+        // ---------- 提交历史筛选 / 排序 ----------
+        function formatDateInputValue(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${date.getFullYear()}-${month}-${day}`;
+        }
+        // 将提交日期归一化为 YYYY-MM-DD，便于与日期输入框的值做区间比较
+        function normalizeCommitDay(dateTimeStr) {
+            const raw = getDateOnly(String(dateTimeStr || ''));
+            const matched = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(raw);
+            if (matched) {
+                return `${matched[1]}-${matched[2].padStart(2, '0')}-${matched[3].padStart(2, '0')}`;
+            }
+            const parsed = new Date(dateTimeStr);
+            if (Number.isNaN(parsed.getTime())) return '';
+            return formatDateInputValue(parsed);
+        }
+        function hasCommitFilter() {
+            const f = commitFilters;
+            return Boolean(f.dateFrom || f.dateTo || f.message || f.hash || f.file);
+        }
+        function isDateQuickActive(days) {
+            const f = commitFilters;
+            if (days === null) return !f.dateFrom && !f.dateTo;
+            if (!f.dateFrom || !f.dateTo) return false;
+            const end = new Date();
+            const start = new Date(end);
+            start.setDate(start.getDate() - (days - 1));
+            return f.dateFrom === formatDateInputValue(start) && f.dateTo === formatDateInputValue(end);
+        }
+        function setCommitQuickRange(days) {
+            if (days === null) {
+                commitFilters.dateFrom = '';
+                commitFilters.dateTo = '';
+            } else {
+                const end = new Date();
+                const start = new Date(end);
+                start.setDate(start.getDate() - (days - 1));
+                commitFilters.dateFrom = formatDateInputValue(start);
+                commitFilters.dateTo = formatDateInputValue(end);
+            }
+            const fromInput = document.getElementById('commitDateFrom');
+            const toInput = document.getElementById('commitDateTo');
+            if (fromInput) fromInput.value = commitFilters.dateFrom;
+            if (toInput) toInput.value = commitFilters.dateTo;
+            refreshCommitView({ resetPage: true, clearExpanded: true });
+        }
+        // 按当前筛选条件生成 filteredCommits，并同步筛选区状态
+        function applyCommitFilters() {
+            const f = commitFilters;
+            const message = f.message.toLowerCase();
+            const hash = f.hash.toLowerCase();
+            const file = f.file.toLowerCase();
+            filteredCommits = gitCommits.filter((c) => {
+                if (message && !String(c.message || '').toLowerCase().includes(message)) return false;
+                if (hash && !String(c.hash || '').toLowerCase().includes(hash)) return false;
+                if (file) {
+                    const files = Array.isArray(c.files) ? c.files : [];
+                    if (!files.some((item) => String(item.file || '').toLowerCase().includes(file))) return false;
+                }
+                if (f.dateFrom || f.dateTo) {
+                    const day = normalizeCommitDay(c.date);
+                    if (!day) return false;
+                    if (f.dateFrom && day < f.dateFrom) return false;
+                    if (f.dateTo && day > f.dateTo) return false;
+                }
+                return true;
+            });
+            updateCommitFilterUi();
+        }
+        function updateCommitFilterUi() {
+            const countEl = document.getElementById('commitFilterCount');
+            if (countEl) countEl.textContent = `${filteredCommits.length} / ${gitCommits.length} 条`;
+            const clearBtn = document.getElementById('clearCommitFilters');
+            if (clearBtn) clearBtn.classList.toggle('hidden', !hasCommitFilter());
+            const fromInput = document.getElementById('commitDateFrom');
+            const toInput = document.getElementById('commitDateTo');
+            if (fromInput && toInput) {
+                fromInput.max = toInput.value || '';
+                toInput.min = fromInput.value || '';
+            }
+            document.querySelectorAll('.filter-quick-btn').forEach((btn) => {
+                const raw = btn.dataset.quickDays;
+                const days = raw === 'none' ? null : Number(raw);
+                btn.classList.toggle('active', isDateQuickActive(days));
+            });
+        }
+        function updateSortIndicators() {
+            document.querySelectorAll('#commitsTable thead th[data-sort-key]').forEach((th) => {
+                const arrow = th.querySelector('.sort-arrow');
+                if (!arrow) return;
+                arrow.textContent = th.dataset.sortKey === commitSort.key
+                    ? (commitSort.direction === 1 ? '▲' : '▼')
+                    : '';
+            });
+            document.querySelectorAll('#dailyStatsTable thead th[data-daily-sort-key]').forEach((th) => {
+                const arrow = th.querySelector('.sort-arrow');
+                if (!arrow) return;
+                arrow.textContent = th.dataset.dailySortKey === dailySort.key
+                    ? (dailySort.direction === 1 ? '▲' : '▼')
+                    : '';
+            });
+        }
+        function getSortedCommits() {
+            const factor = commitSort.direction;
+            const sorted = [...filteredCommits];
+            sorted.sort((a, b) => {
+                let result = 0;
+                switch (commitSort.key) {
+                    case 'hash': result = String(a.hash || '').localeCompare(String(b.hash || '')); break;
+                    case 'author': result = String(a.author || '').localeCompare(String(b.author || '')); break;
+                    case 'additions': result = (a.additions || 0) - (b.additions || 0); break;
+                    case 'deletions': result = (a.deletions || 0) - (b.deletions || 0); break;
+                    case 'net': result = (a.additions - a.deletions) - (b.additions - b.deletions); break;
+                    case 'files': result = (a.files?.length || 0) - (b.files?.length || 0); break;
+                    case 'message': result = String(a.message || '').localeCompare(String(b.message || '')); break;
+                    default: result = new Date(a.date) - new Date(b.date);
+                }
+                return result * factor;
+            });
+            return sorted;
+        }
+        function refreshCommitView({ resetPage = true, clearExpanded = false } = {}) {
+            applyCommitFilters();
+            sortedCommitsCache = getSortedCommits();
+            if (resetPage) currentPage = 1;
+            if (clearExpanded) expandedCommitHashes.clear();
+            updateSortIndicators();
+            renderCommitTable();
+            renderPagination();
+        }
+        // 筛选输入做短防抖，避免超大仓库每次敲键都全量过滤
+        function scheduleCommitViewRefresh() {
+            window.clearTimeout(filterRefreshTimer);
+            filterRefreshTimer = window.setTimeout(() => {
+                filterRefreshTimer = 0;
+                refreshCommitView({ resetPage: true, clearExpanded: true });
+            }, 120);
+        }
+
+        // 渲染提交表格：直接使用缓存的筛选 + 排序结果（翻页/展开行不再重排）
         function renderCommitTable() {
             const tbody = document.getElementById('commitTableBody');
             if (!tbody) return;
+            const sorted = sortedCommitsCache;
+            const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+            if (currentPage > totalPages) currentPage = totalPages;
             const startIdx = (currentPage - 1) * pageSize;
-            const pageData = gitCommits.slice(startIdx, startIdx + pageSize);
-            if (pageData.length === 0) { tbody.innerHTML = '<tr><td colspan="8">暂无记录</td></tr>'; return; }
+            const pageData = sorted.slice(startIdx, startIdx + pageSize);
+            if (pageData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8">${hasCommitFilter() ? '没有符合筛选条件的提交记录' : '暂无记录'}</td></tr>`;
+                return;
+            }
             let html = '';
             for (const c of pageData) {
                 const net = c.additions - c.deletions;
-                html += `<tr>
-                <td><span class="hash-short" title="${c.hash}">${c.hash.substring(0, 7)}</span></td>
-                <td>${c.date}</td><td>${escapeHtml(c.author)}</td>
+                const expanded = expandedCommitHashes.has(c.hash);
+                const files = Array.isArray(c.files) ? c.files : [];
+                html += `<tr class="commit-row${expanded ? ' is-expanded' : ''}" data-commit-hash="${escapeHtml(c.hash)}">
+                <td><span class="hash-short" title="${escapeHtml(c.hash)}">${escapeHtml(c.hash.substring(0, 7))}</span></td>
+                <td>${escapeHtml(c.date)}</td><td>${escapeHtml(c.author)}</td>
                 <td><span class="additions">+${c.additions}</span></td>
                 <td><span class="deletions">-${c.deletions}</span></td>
                 <td class="${net >= 0 ? 'net-positive' : 'net-negative'}">${net >= 0 ? '+' : ''}${net}</td>
-                <td>${c.files?.length || 0}</td>
-                <td title="${escapeHtml(c.message)}">${escapeHtml(c.message?.slice(0, 45) || '')}</td>
+                <td>${files.length}</td>
+                <td title="${escapeHtml(c.message)}">
+                    <div class="message-cell"><span class="expand-icon">${expanded ? '▼' : '▶'}</span><span class="message-text">${escapeHtml(c.message?.slice(0, 45) || '')}</span></div>
+                </td>
             </tr>`;
+                if (expanded) {
+                    html += `<tr class="file-details-row"><td colspan="8">
+                        <div class="file-details">
+                            <h4>文件修改详情</h4>
+                            <div class="file-list">${files.length
+                                ? files.map((file) => `<div class="file-item"><span class="file-name">${escapeHtml(file.file)}</span><span class="file-changes"><span class="additions">+${file.additions}</span><span class="deletions">-${file.deletions}</span></span></div>`).join('')
+                                : '<p>该提交没有文件变更记录</p>'}</div>
+                        </div>
+                    </td></tr>`;
+                }
             }
             tbody.innerHTML = html;
         }
         function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, function (m) { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; return m; }); }
 
         function renderPagination() {
-            const totalPages = Math.ceil(gitCommits.length / pageSize);
+            const totalPages = Math.ceil(filteredCommits.length / pageSize);
             const container = document.getElementById('paginationControls');
             if (!container) return;
             if (totalPages <= 1) { container.innerHTML = '<span class="badge-light">共1页</span>'; return; }
@@ -1425,17 +2045,33 @@
             });
         }
 
+        function dailyActiveScore(d) {
+            return d.commitsCount * 2 + Math.abs(d.net) / 12;
+        }
+
         function renderDailyStatsTable() {
             const tbody = document.getElementById('dailyStatsBody');
             if (!dailyAggregated.length) { tbody.innerHTML = '<tr><td colspan="6">无数据</td></tr>'; return; }
-            const sortedDesc = [...dailyAggregated].sort((a, b) => new Date(b.date) - new Date(a.date));
-            const totalPages = Math.max(1, Math.ceil(sortedDesc.length / dailyPageSize));
+            const factor = dailySort.direction;
+            const sorted = [...dailyAggregated].sort((a, b) => {
+                let result = 0;
+                switch (dailySort.key) {
+                    case 'commitsCount': result = a.commitsCount - b.commitsCount; break;
+                    case 'totalAdd': result = a.totalAdd - b.totalAdd; break;
+                    case 'totalDel': result = a.totalDel - b.totalDel; break;
+                    case 'net': result = a.net - b.net; break;
+                    case 'active': result = dailyActiveScore(a) - dailyActiveScore(b); break;
+                    default: result = new Date(a.date) - new Date(b.date);
+                }
+                return result * factor;
+            });
+            const totalPages = Math.max(1, Math.ceil(sorted.length / dailyPageSize));
             if (dailyCurrentPage > totalPages) dailyCurrentPage = totalPages;
             const startIdx = (dailyCurrentPage - 1) * dailyPageSize;
-            const pageData = sortedDesc.slice(startIdx, startIdx + dailyPageSize);
+            const pageData = sorted.slice(startIdx, startIdx + dailyPageSize);
             let html = '';
             for (const d of pageData) {
-                const activeScore = Math.floor(d.commitsCount * 2 + Math.abs(d.net) / 12);
+                const activeScore = Math.floor(dailyActiveScore(d));
                 html += `<tr><td>${d.date}</td><td><strong>${d.commitsCount}</strong> 次</td><td class="additions">+${d.totalAdd}</td><td class="deletions">-${d.totalDel}</td><td class="${d.net >= 0 ? 'net-positive' : 'net-negative'}">${d.net >= 0 ? '+' : ''}${d.net}</td><td><span class="badge-light">🔥 ${activeScore}</span></td></tr>`;
             }
             tbody.innerHTML = html;
@@ -1477,20 +2113,29 @@
             const labels = sortedAsc.map(d => d.date);
             const addData = sortedAsc.map(d => d.totalAdd);
             const delData = sortedAsc.map(d => d.totalDel);
+            // 历史很长时不再逐点画圆点并启用降采样，绘制成本不随数据点线性增长
+            const dense = sortedAsc.length > 180;
+            const pointStyle = dense
+                ? { pointRadius: 0, pointHoverRadius: 4 }
+                : { pointRadius: 2, pointHoverRadius: 5 };
             trendChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels, datasets: [
-                        { label: '新增代码行数 (+)', data: addData, borderColor: '#1f7a4d', backgroundColor: 'rgba(31,122,77,0.06)', borderWidth: 2.5, fill: true, pointRadius: 2, tension: 0.2 },
-                        { label: '删除代码行数 (-)', data: delData, borderColor: '#c9372c', backgroundColor: 'rgba(201,55,44,0.04)', borderWidth: 2.5, fill: true, pointRadius: 2, tension: 0.2 }
+                        { label: '新增代码行数 (+)', data: addData, borderColor: '#1f7a4d', backgroundColor: 'rgba(31,122,77,0.06)', borderWidth: 2.5, fill: true, tension: 0.2, ...pointStyle },
+                        { label: '删除代码行数 (-)', data: delData, borderColor: '#c9372c', backgroundColor: 'rgba(201,55,44,0.04)', borderWidth: 2.5, fill: true, tension: 0.2, ...pointStyle }
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    // 首次出图不做动画，避免大历史在加载瞬间卡佳主线程
+                    animation: false,
+                    normalized: true,
                     color: '#3f5145',
+                    ...(dense ? { decimation: { enabled: true, algorithm: 'lttb', samples: 600 } } : {}),
                     plugins: {
-                        tooltip: { mode: 'index' },
+                        tooltip: { mode: 'index', intersect: false },
                         legend: { position: 'top', labels: { color: '#3f5145', usePointStyle: true } },
                         zoom: {
                             pan: {
@@ -1528,6 +2173,147 @@
             });
         }
 
+        // ---------- 作者贡献统计 ----------
+        function aggregateContributors(commits) {
+            const map = new Map();
+            for (const commit of commits) {
+                const author = String(commit.author || '').trim() || 'Unknown';
+                let stats = map.get(author);
+                if (!stats) {
+                    stats = { author, commits: 0, additions: 0, deletions: 0, files: new Set() };
+                    map.set(author, stats);
+                }
+                stats.commits += 1;
+                stats.additions += Number(commit.additions) || 0;
+                stats.deletions += Number(commit.deletions) || 0;
+                for (const file of Array.isArray(commit.files) ? commit.files : []) {
+                    if (file?.file) stats.files.add(file.file);
+                }
+            }
+            const totalCommits = commits.length;
+            return [...map.values()]
+                .map((stats) => ({
+                    author: stats.author,
+                    commits: stats.commits,
+                    additions: stats.additions,
+                    deletions: stats.deletions,
+                    files: stats.files.size,
+                    commitPercentage: totalCommits > 0 ? (stats.commits / totalCommits) * 100 : 0
+                }))
+                .sort((a, b) => b.commitPercentage - a.commitPercentage);
+        }
+        const CONTRIBUTOR_COLORS = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#6e7074'];
+
+        function renderContributorsChart() {
+            const canvas = document.getElementById('contributorsChart');
+            const listEl = document.getElementById('contributorsList');
+            if (!canvas || !listEl) return;
+            const data = aggregateContributors(gitCommits);
+            listEl.innerHTML = data.length
+                ? data.map((item) => `<div class="contributor-item">
+                    <div class="contributor-info">
+                        <div class="contributor-name">${escapeHtml(item.author)}</div>
+                        <div class="contributor-meta">
+                            <span>提交: ${item.commits}</span>
+                            <span class="additions">+${item.additions}</span>
+                            <span class="deletions">-${item.deletions}</span>
+                            <span>文件: ${item.files}</span>
+                        </div>
+                    </div>
+                    <div class="contributor-percentage">${item.commitPercentage.toFixed(1)}%</div>
+                </div>`).join('')
+                : '<p>暂无贡献数据</p>';
+            if (contributorsChartInstance) contributorsChartInstance.destroy();
+            const ctx = canvas.getContext('2d');
+            contributorsChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: data.map((item) => item.author),
+                    datasets: [{
+                        label: '提交次数',
+                        data: data.map((item) => item.commits),
+                        backgroundColor: data.map((item, index) => CONTRIBUTOR_COLORS[index % CONTRIBUTOR_COLORS.length]),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    cutout: '58%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: { color: '#3f5145', usePointStyle: true, boxWidth: 8 }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => {
+                                    const values = context.dataset.data || [];
+                                    const total = values.reduce((sum, value) => sum + value, 0) || 1;
+                                    const percent = ((context.parsed / total) * 100).toFixed(1);
+                                    return `${context.label}: ${context.parsed} 次 (${percent}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ---------- 页面提示 / 右键菜单 ----------
+        function showPageToast(message) {
+            const toast = document.getElementById('pageToast');
+            if (!toast) return;
+            toast.textContent = message;
+            toast.classList.add('is-visible');
+            window.clearTimeout(pageToastTimer);
+            pageToastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 1800);
+        }
+        function openCommitContextMenu(event, hash) {
+            const overlay = document.getElementById('commitContextMenu');
+            const panel = document.getElementById('commitContextPanel');
+            if (!overlay || !panel) return;
+            commitContextHash = hash || '';
+            overlay.classList.remove('hidden');
+            panel.style.left = `${event.clientX}px`;
+            panel.style.top = `${event.clientY}px`;
+            const rect = panel.getBoundingClientRect();
+            if (rect.right > window.innerWidth - 8) {
+                panel.style.left = `${Math.max(8, window.innerWidth - rect.width - 8)}px`;
+            }
+            if (rect.bottom > window.innerHeight - 8) {
+                panel.style.top = `${Math.max(8, window.innerHeight - rect.height - 8)}px`;
+            }
+        }
+        function closeCommitContextMenu() {
+            const overlay = document.getElementById('commitContextMenu');
+            if (!overlay || overlay.classList.contains('hidden')) return;
+            overlay.classList.add('hidden');
+            commitContextHash = '';
+        }
+        async function copyCommitHash() {
+            const hash = commitContextHash;
+            if (!hash) return;
+            let copied = false;
+            try {
+                await navigator.clipboard.writeText(hash);
+                copied = true;
+            } catch {
+                const textarea = document.createElement('textarea');
+                textarea.value = hash;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try { copied = document.execCommand('copy'); } catch { copied = false; }
+                textarea.remove();
+            }
+            closeCommitContextMenu();
+            showPageToast(copied ? '已复制 Hash' : '复制失败，请手动选择 Hash');
+        }
+
         function updateTotalStats() {
             document.getElementById('totalCommitsCount').innerText = gitCommits.length;
             const filteredDaily = getTrendFilteredDailyData();
@@ -1558,6 +2344,7 @@
 
                     if (!willCollapse) {
                         if (trendChartInstance) trendChartInstance.resize();
+                        if (contributorsChartInstance) contributorsChartInstance.resize();
                         const yearSelect = document.getElementById('heatmapYearSelect');
                         if (yearSelect?.value) renderHeatmap(parseInt(yearSelect.value, 10));
                     }
@@ -1583,6 +2370,39 @@
             // 返回该年每一天的提交次数映射 (日期字符串 -> count)
             return dailyCount;
         }
+
+        // 热力图 tooltip 全局复用：370 多个格子共用一套事件与一个节点，
+        // 避免每格各自挂监听并在 hover 时反复创建/销毁 DOM
+        let heatmapTooltip = null;
+        function ensureHeatmapTooltip() {
+            if (heatmapTooltip) return heatmapTooltip;
+            heatmapTooltip = document.createElement('div');
+            heatmapTooltip.className = 'tooltip-heat';
+            document.body.appendChild(heatmapTooltip);
+            return heatmapTooltip;
+        }
+        function showHeatmapTooltip(cell) {
+            const tip = ensureHeatmapTooltip();
+            const date = cell.dataset.date || '';
+            tip.textContent = date ? `${date} : ${cell.dataset.count || 0} 次提交` : '无数据';
+            tip.style.display = 'block';
+            const rect = cell.getBoundingClientRect();
+            let left = rect.right + 10;
+            if (left + tip.offsetWidth > window.innerWidth - 8) {
+                left = Math.max(8, rect.left - tip.offsetWidth - 10);
+            }
+            let top = rect.top - 28;
+            if (top < 8) top = rect.bottom + 8;
+            tip.style.left = `${left}px`;
+            tip.style.top = `${top}px`;
+        }
+        function hideHeatmapTooltip() {
+            if (heatmapTooltip) heatmapTooltip.style.display = 'none';
+        }
+        // tooltip 是 fixed 定位，滚动后需要隐藏，避免提示飘在高处
+        window.addEventListener('scroll', () => {
+            if (heatmapTooltip && heatmapTooltip.style.display === 'block') hideHeatmapTooltip();
+        }, { passive: true });
 
         // 渲染热力图 (基于年份)
         async function renderHeatmap(year) {
@@ -1629,14 +2449,10 @@
             container.style.gap = `${colGap}px`;
             container.style.rowGap = `${colGap}px`;
             container.style.columnGap = `${colGap}px`;
-            container.innerHTML = '';
-            // 填充所有格子
+            // 一次性拼装整年格子，避免逐格插入与逐格绑定事件
+            const cellHtml = [];
             for (let i = 0; i < cells.length; i++) {
                 const cellData = cells[i];
-                const div = document.createElement('div');
-                div.className = 'heatmap-cell';
-                div.style.width = `${cellSize}px`;
-                div.style.height = `${cellSize}px`;
                 const count = cellData.count;
                 // 颜色分级 (基于提交次数)
                 let bg = '#ebedf0';
@@ -1644,26 +2460,22 @@
                 else if (count >= 3 && count <= 5) bg = '#40c463';
                 else if (count >= 6 && count <= 9) bg = '#30a14e';
                 else if (count >= 10) bg = '#216e39';
-                div.style.backgroundColor = bg;
-                div.setAttribute('data-date', cellData.date || '');
-                div.setAttribute('data-count', count);
-                // tooltip
-                div.addEventListener('mouseenter', (e) => {
-                    const tip = document.createElement('div');
-                    tip.className = 'tooltip-heat';
-                    const dateText = cellData.date ? cellData.date : '(填充)';
-                    tip.innerText = cellData.date ? `${dateText} : ${count} 次提交` : '无数据';
-                    document.body.appendChild(tip);
-                    const rect = e.target.getBoundingClientRect();
-                    tip.style.left = rect.left + window.scrollX + 12 + 'px';
-                    tip.style.top = rect.top + window.scrollY - 28 + 'px';
-                    e.target._tooltip = tip;
-                });
-                div.addEventListener('mouseleave', (e) => {
-                    if (e.target._tooltip) { e.target._tooltip.remove(); e.target._tooltip = null; }
-                });
-                container.appendChild(div);
+                cellHtml.push(
+                    `<div class="heatmap-cell" data-date="${cellData.date || ''}" data-count="${count}" style="width:${cellSize}px;height:${cellSize}px;background-color:${bg}"></div>`
+                );
             }
+            container.innerHTML = cellHtml.join('');
+            container.onmouseover = (event) => {
+                const cell = event.target.closest('.heatmap-cell');
+                if (!cell || !container.contains(cell)) return;
+                showHeatmapTooltip(cell);
+            };
+            container.onmouseout = (event) => {
+                const cell = event.target.closest('.heatmap-cell');
+                if (!cell) return;
+                if (event.relatedTarget && cell.contains(event.relatedTarget)) return;
+                hideHeatmapTooltip();
+            };
             // 补齐剩余格子使网格完整 (如果cells数量不能被7整除, 缺的最后列不显示也可以，因为grid auto-flow不会留空)
             // 生成月份标签 (按周列对齐，确保与热力图格子一一对应)
             const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
@@ -1722,7 +2534,7 @@
         async function init() {
             setupCollapsibleCards();
             await fetchRepos();
-            renderRepoSelect();
+            renderRepoSelect(readRepoIdFromQuery());
             await loadDashboardData(selectedRepoId);
 
             const repoSelect = document.getElementById('repoSelect');
@@ -1829,6 +2641,7 @@
             pageSelect.addEventListener('change', (e) => {
                 pageSize = parseInt(e.target.value);
                 currentPage = 1;
+                expandedCommitHashes.clear();
                 renderCommitTable();
                 renderPagination();
             });
@@ -1839,7 +2652,107 @@
                 renderDailyStatsTable();
                 renderDailyPagination();
             });
-            window.addEventListener('resize', () => { if (trendChartInstance) trendChartInstance.resize(); });
+
+            // 提交历史筛选：输入防抖后重算；点击筛选区不触发卡片折叠
+            const commitFilterInputs = [
+                { id: 'commitDateFrom', key: 'dateFrom', event: 'input' },
+                { id: 'commitDateTo', key: 'dateTo', event: 'input' },
+                { id: 'commitMessageFilter', key: 'message', event: 'input' },
+                { id: 'commitHashFilter', key: 'hash', event: 'input' },
+                { id: 'commitFileFilter', key: 'file', event: 'input' },
+            ];
+            for (const item of commitFilterInputs) {
+                const input = document.getElementById(item.id);
+                if (!input) continue;
+                input.addEventListener(item.event, () => {
+                    commitFilters[item.key] = input.value.trim();
+                    scheduleCommitViewRefresh();
+                });
+            }
+            const commitFiltersEl = document.getElementById('commitFilters');
+            if (commitFiltersEl) commitFiltersEl.addEventListener('click', (event) => event.stopPropagation());
+            document.querySelectorAll('.filter-quick-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const raw = btn.dataset.quickDays;
+                    setCommitQuickRange(raw === 'none' ? null : Number(raw));
+                });
+            });
+            const clearCommitFiltersBtn = document.getElementById('clearCommitFilters');
+            if (clearCommitFiltersBtn) {
+                clearCommitFiltersBtn.addEventListener('click', () => {
+                    commitFilters = { dateFrom: '', dateTo: '', message: '', hash: '', file: '' };
+                    ['commitDateFrom', 'commitDateTo', 'commitMessageFilter', 'commitHashFilter', 'commitFileFilter'].forEach((id) => {
+                        const input = document.getElementById(id);
+                        if (input) input.value = '';
+                    });
+                    refreshCommitView({ resetPage: true, clearExpanded: true });
+                });
+            }
+
+            // 提交历史 / 每日统计：列头点击切换排序
+            document.querySelector('#commitsTable thead')?.addEventListener('click', (event) => {
+                const th = event.target.closest('th[data-sort-key]');
+                if (!th) return;
+                const key = th.dataset.sortKey;
+                if (commitSort.key === key) commitSort.direction = commitSort.direction === 1 ? -1 : 1;
+                else { commitSort.key = key; commitSort.direction = 1; }
+                refreshCommitView({ resetPage: true, clearExpanded: true });
+            });
+            document.querySelector('#dailyStatsTable thead')?.addEventListener('click', (event) => {
+                const th = event.target.closest('th[data-daily-sort-key]');
+                if (!th) return;
+                const key = th.dataset.dailySortKey;
+                if (dailySort.key === key) dailySort.direction = dailySort.direction === 1 ? -1 : 1;
+                else { dailySort.key = key; dailySort.direction = 1; }
+                dailyCurrentPage = 1;
+                updateSortIndicators();
+                renderDailyStatsTable();
+                renderDailyPagination();
+            });
+
+            // 提交行：点击展开文件明细，右键复制 Hash
+            const commitTbody = document.getElementById('commitTableBody');
+            if (commitTbody) {
+                commitTbody.addEventListener('click', (event) => {
+                    const row = event.target.closest('tr.commit-row');
+                    if (!row) return;
+                    const hash = row.dataset.commitHash;
+                    if (!hash) return;
+                    if (expandedCommitHashes.has(hash)) expandedCommitHashes.delete(hash);
+                    else expandedCommitHashes.add(hash);
+                    renderCommitTable();
+                });
+                commitTbody.addEventListener('contextmenu', (event) => {
+                    const row = event.target.closest('tr.commit-row');
+                    if (!row) return;
+                    event.preventDefault();
+                    openCommitContextMenu(event, row.dataset.commitHash);
+                });
+            }
+            const commitContextMenuEl = document.getElementById('commitContextMenu');
+            if (commitContextMenuEl) {
+                commitContextMenuEl.addEventListener('click', closeCommitContextMenu);
+                commitContextMenuEl.addEventListener('contextmenu', (event) => {
+                    event.preventDefault();
+                    closeCommitContextMenu();
+                });
+            }
+            const copyCommitHashBtn = document.getElementById('copyCommitHashBtn');
+            if (copyCommitHashBtn) {
+                copyCommitHashBtn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    void copyCommitHash();
+                });
+            }
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') closeCommitContextMenu();
+            });
+            window.addEventListener('scroll', closeCommitContextMenu, { passive: true });
+
+            window.addEventListener('resize', () => {
+                if (trendChartInstance) trendChartInstance.resize();
+                if (contributorsChartInstance) contributorsChartInstance.resize();
+            });
         }
 
         // 页面启动：先恢复登录态，验证通过后再加载仓库数据

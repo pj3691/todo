@@ -1260,6 +1260,18 @@
             cursor: not-allowed;
         }
 
+        /* 洞察入口：用品牌绿色与普通操作图标区分 */
+        .project-insight-btn {
+            color: var(--green-strong);
+            border-color: #b9d8c5;
+        }
+
+        /* 拉取入口：用蓝色与启动/编辑等操作区分 */
+        .project-pull-btn {
+            color: #1d6fb8;
+            border-color: #cde0f2;
+        }
+
         .project-run-toggle.is-start {
             color: var(--green-strong);
             border-color: #b9d8c5;
@@ -2502,6 +2514,7 @@
                         <span>一键启动</span>
                     </button>
                     <button class="btn" id="addFolderBtn" type="button">新建文件夹</button>
+                    <button class="btn" id="cloneProjectBtn" type="button" title="从 Git 远程仓库拉取代码到本机">拉取项目</button>
                     <button class="btn btn-primary" id="addProjectBtn" type="button">添加项目</button>
                 </div>
             </div>
@@ -2601,6 +2614,14 @@
                         </div>
                         <p class="field-hint">填写后端机器上的项目文件夹绝对路径</p>
                     </div>
+                    <div class="field">
+                        <label class="field-label" for="projectGitUrl">Git 远程地址</label>
+                        <div class="input-with-button">
+                            <input class="text-input" id="projectGitUrl" type="text" placeholder="例如：https://github.com/user/repo.git" maxlength="500">
+                            <button class="btn" id="detectGitUrlBtn" type="button" title="从项目目录读取 origin 远程地址">自动识别</button>
+                        </div>
+                        <p class="field-hint">用于迁移到新机器：自动识别会读取项目目录的 origin 地址，识别不到时可以手动填写</p>
+                    </div>
                     <div class="field-grid">
                         <div class="field">
                             <label class="field-label" for="projectName">项目名称</label>
@@ -2658,6 +2679,40 @@
                 <div class="modal-footer">
                     <button class="btn" id="cancelProjectBtn" type="button">取消</button>
                     <button class="btn btn-primary" id="saveProjectBtn" type="submit">添加项目</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-layer" id="cloneProjectModal" aria-hidden="true">
+        <div class="modal is-narrow" role="dialog" aria-modal="true" aria-labelledby="cloneProjectTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-kicker">Clone Project</span>
+                    <h2 id="cloneProjectTitle">拉取项目</h2>
+                    <p>从 Git 远程仓库把代码拉取到后端机器，适合新机器迁移或重新下载代码</p>
+                </div>
+                <button class="icon-btn" id="closeCloneProjectModalBtn" type="button" aria-label="关闭">✕</button>
+            </div>
+            <form id="cloneProjectForm">
+                <div class="modal-body">
+                    <div class="field">
+                        <label class="field-label" for="cloneGitUrl">Git 远程地址</label>
+                        <input class="text-input" id="cloneGitUrl" type="text" placeholder="例如：https://github.com/user/repo.git" maxlength="500" required>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="cloneTargetDir">拉取到</label>
+                        <div class="input-with-button">
+                            <input class="text-input" id="cloneTargetDir" type="text" placeholder="选择本地文件夹，会在其下创建仓库子目录" required>
+                            <button class="btn path-pick-btn" id="pickCloneTargetDirBtn" type="button" title="选择文件夹" aria-label="选择文件夹">…</button>
+                        </div>
+                        <p class="field-hint" id="cloneTargetHint">会在所选文件夹下创建与仓库同名的子目录，子目录已存在且不为空时会中止</p>
+                    </div>
+                    <div class="form-error hidden" id="cloneProjectError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" id="cancelCloneProjectBtn" type="button">取消</button>
+                    <button class="btn btn-primary" id="confirmCloneProjectBtn" type="submit">开始拉取</button>
                 </div>
             </form>
         </div>

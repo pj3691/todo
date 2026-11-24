@@ -25,6 +25,7 @@ type ProjectRow = {
     command: string;
     folder: string;
     intro: string;
+    git_url: string;
     created_by: number | null;
     created_at: string;
     updated_at: string;
@@ -167,6 +168,7 @@ type ProjectDto = {
     startCommand: string;
     folder: string;
     intro: string;
+    gitUrl: string;
     runCommands: ProjectCommandDto[];
     links: ProjectLinkDto[];
     status: ProjectStatus;
@@ -362,6 +364,146 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
                 resolve(String(stdout || "").trim());
             }
         );
+    });
+};
+
+/** 读取项目目录的 Git 远程地址，优先 origin；不是 git 仓库时返回空字符串 */
+const detectGitRemote = async (directory: string): Promise<{ url: string; remote: string }> => {
+    const runGit = (args: string[]): Promise<string> =>
+        new Promise((resolve, reject) => {
+            execFile(
+                "git",
+                ["-C", directory, ...args],
+                { windowsHide: true, timeout: 15_000, maxBuffer: 256 * 1024 },
+                (error, stdout, stderr) => {
+                    if (error) {
+                        reject(new Error(String(stderr || error.message || "读取 Git 信息失败").trim()));
+                        return;
+                    }
+                    resolve(String(stdout || ""));
+                }
+            );
+        });
+
+    let remotes: string[] = [];
+    try {
+        const raw = await runGit(["remote"]);
+        remotes = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+    } catch {
+        return { url: "", remote: "" };
+    }
+    if (!remotes.length) return { url: "", remote: "" };
+    const remote = remotes.includes("origin") ? "origin" : (remotes[0] ?? "");
+    if (!remote) return { url: "", remote: "" };
+    try {
+        const url = (await runGit(["remote", "get-url", remote])).trim();
+        return { url, remote };
+    } catch {
+        return { url: "", remote: "" };
+    }
+};
+
+const GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+const GIT_CLONE_STDERR_LIMIT = 20_000;
+
+/** 从远程地址推断仓库目录名，去掉 .git、协议前缀和 Windows 非法字符 */
+const deriveGitRepoName = (url: string): string => {
+    const cleaned = url.trim().replace(/[\\/]+$/, "").replace(/\.git$/i, "");
+    const scpMatch = /^[^\s/]+@[^\s:]+:(.+)$/.exec(cleaned);
+    const candidate = scpMatch?.[1] || cleaned;
+    const parts = candidate.split(/[\\/:]+/).filter(Boolean);
+    const last = parts[parts.length - 1] || "repo";
+    const sanitized = last
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+        .replace(/[. ]+$/, "")
+        .trim();
+    return sanitized || "repo";
+};
+
+/** 把远程仓库 clone 到目标父目录下与仓库同名的子目录，返回路径与识别结果 */
+const cloneGitRepository = (
+    url: string,
+    targetRoot: string
+): Promise<{ path: string; name: string; detection: DetectionResult }> => {
+    const name = deriveGitRepoName(url);
+    const destination = path.join(targetRoot, name);
+    if (fs.existsSync(destination)) {
+        let entries: string[] = [];
+        try {
+            entries = fs.readdirSync(destination);
+        } catch {
+            throw new ProjectError(400, "无法读取目标文件夹");
+        }
+        if (entries.length > 0) {
+            throw new ProjectError(409, `目标文件夹已存在且不为空：${destination}`);
+        }
+    }
+
+    return new Promise((resolve, reject) => {
+        const child = spawn("git", ["clone", "--progress", "--", url, destination], {
+            windowsHide: true,
+        });
+        let stderr = "";
+        let settled = false;
+        let timer: NodeJS.Timeout | null = null;
+        const finish = (error?: Error): void => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            if (error) {
+                reject(error);
+                return;
+            }
+            try {
+                resolve({ path: destination, name, detection: detectProject(destination) });
+            } catch {
+                // 代码已拉取成功，识别失败时仍把路径交给前端
+                resolve({
+                    path: destination,
+                    name,
+                    detection: {
+                        path: destination,
+                        name,
+                        type: "custom",
+                        typeLabel: PROJECT_TYPE_LABELS.custom,
+                        command: "",
+                        startCommand: "",
+                        commands: [],
+                        detectedType: "custom",
+                        detectedTypeLabel: PROJECT_TYPE_LABELS.custom,
+                    },
+                });
+            }
+        };
+        timer = setTimeout(() => {
+            child.kill();
+            finish(new ProjectError(408, "拉取超时，请检查网络或仓库大小"));
+        }, GIT_CLONE_TIMEOUT_MS);
+        child.stdout?.on("data", () => {
+            // stdout 仅做消费，避兔子进程输出阻塞管道；诊断信息在 stderr
+        });
+        child.stderr?.on("data", (chunk) => {
+            stderr = `${stderr}${chunk.toString()}`;
+            if (stderr.length > GIT_CLONE_STDERR_LIMIT) stderr = stderr.slice(-GIT_CLONE_STDERR_LIMIT);
+        });
+        child.on("error", (error) => {
+            finish(new ProjectError(500, `无法执行 git：${error.message}`));
+        });
+        child.on("close", (code) => {
+            if (code === 0) {
+                finish();
+                return;
+            }
+            const detail = stderr
+                .replace(/\r/g, "\n")
+                .split("\n")
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .slice(-6)
+                .join("\n")
+                .slice(-800);
+            finish(new ProjectError(500, detail ? `拉取失败：\n${detail}` : `拉取失败（git 退出码 ${code}）`));
+        });
     });
 };
 
@@ -1265,6 +1407,10 @@ export const registerProjectFeature = (
     if (!projectColumns.some((column) => column.name === "intro")) {
         db.exec("ALTER TABLE projects ADD COLUMN intro TEXT NOT NULL DEFAULT ''");
     }
+    // Git 远程地址也是后加字段，用于把项目迁移到新机器时重新拉取。
+    if (!projectColumns.some((column) => column.name === "git_url")) {
+        db.exec("ALTER TABLE projects ADD COLUMN git_url TEXT NOT NULL DEFAULT ''");
+    }
 
     // 文件夹排序是后加字段；旧数据按首字母初始化一次。
     const folderColumns = db.prepare("PRAGMA table_info(project_folders)").all() as Array<{ name: string }>;
@@ -1322,6 +1468,8 @@ export const registerProjectFeature = (
     };
     let nextRunId = 1;
     let folderPickerBusy = false;
+    // 正在拉取的目标目录，避免重复 clone 到同一位置
+    const cloningTargets = new Set<string>();
 
     const listProjectsStmt = db.prepare("SELECT * FROM projects ORDER BY id DESC");
     const listQuickstartStmt = db.prepare("SELECT project_id FROM project_quickstart ORDER BY project_id");
@@ -1373,11 +1521,11 @@ export const registerProjectFeature = (
         "UPDATE projects SET folder = ?, updated_at = ? WHERE id = ?"
     );
     const insertProjectStmt = db.prepare(
-        `INSERT INTO projects (name, path, type, command, folder, intro, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO projects (name, path, type, command, folder, intro, git_url, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const updateProjectStmt = db.prepare(
-        `UPDATE projects SET name = ?, path = ?, type = ?, command = ?, folder = ?, intro = ?, updated_at = ? WHERE id = ?`
+        `UPDATE projects SET name = ?, path = ?, type = ?, command = ?, folder = ?, intro = ?, git_url = ?, updated_at = ? WHERE id = ?`
     );
     const deleteProjectStmt = db.prepare("DELETE FROM projects WHERE id = ?");
     const deleteProjectCommandsStmt = db.prepare("DELETE FROM project_commands WHERE project_id = ?");
@@ -1484,6 +1632,31 @@ export const registerProjectFeature = (
         return intro;
     };
 
+    // Git 远程地址：允许 http/https/ssh/git/file 协议、scp 风格和本地路径
+    const parseGitUrl = (input: unknown): string => {
+        const url = String(input ?? "").trim();
+        if (!url) return "";
+        if (url.length > 500) throw new ProjectError(400, "Git 远程地址不能超过 500 个字符");
+        if (/[\0\r\n]/.test(url)) throw new ProjectError(400, "Git 远程地址不合法");
+        if (url.startsWith("-")) throw new ProjectError(400, "Git 远程地址不合法");
+        const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(url);
+        if (schemeMatch?.[1]) {
+            const scheme = schemeMatch[1].toLowerCase();
+            if (!["http", "https", "ssh", "git", "file"].includes(scheme)) {
+                throw new ProjectError(400, "仅支持 http/https/ssh/git/file 协议的仓库地址");
+            }
+        }
+        return url;
+    };
+
+    const resolveCloneTarget = (input: unknown): string => {
+        const text = String(input ?? "").trim();
+        if (!text) throw new ProjectError(400, "请选择拉取到的文件夹");
+        const resolved = resolveFolderPath(text);
+        if (!resolved) throw new ProjectError(400, "请选择拉取到的文件夹");
+        return resolved;
+    };
+
     const parseProjectLinks = (input: unknown): ParsedProjectLink[] => {
         if (!Array.isArray(input)) return [];
         const result: ParsedProjectLink[] = [];
@@ -1579,6 +1752,7 @@ export const registerProjectFeature = (
             startCommand: string,
             folder: string,
             intro: string,
+            gitUrl: string,
             createdBy: number | null,
             commands: DetectedCommand[],
             links: ParsedProjectLink[]
@@ -1591,6 +1765,7 @@ export const registerProjectFeature = (
                 startCommand,
                 folder,
                 intro,
+                gitUrl,
                 createdBy,
                 now,
                 now
@@ -1612,6 +1787,7 @@ export const registerProjectFeature = (
             startCommand: string,
             folder: string,
             intro: string | null,
+            gitUrl: string | null,
             commands: DetectedCommand[] | null,
             links: ParsedProjectLink[] | null
         ): void => {
@@ -1623,6 +1799,7 @@ export const registerProjectFeature = (
                 startCommand,
                 folder,
                 intro ?? current?.intro ?? "",
+                gitUrl ?? current?.git_url ?? "",
                 formatDateTime(),
                 id
             );
@@ -1673,6 +1850,7 @@ export const registerProjectFeature = (
             startCommand: row.command,
             folder: row.folder || "",
             intro: row.intro || "",
+            gitUrl: row.git_url || "",
             runCommands: commands ?? getProjectCommands(row.id),
             links: links ?? getProjectLinks(row.id),
             status: runtime?.status || "stopped",
@@ -2338,6 +2516,46 @@ export const registerProjectFeature = (
         }
     });
 
+    // 自动识别项目目录的 Git 远程地址（优先 origin）
+    projectRouter.post("/detect-git", async (req, res) => {
+        try {
+            if (!isLoopbackRequest(req)) {
+                throw new ProjectError(403, "只能读取运行后端本机上的 Git 信息");
+            }
+            const directory = resolveProjectDirectory(req.body?.path);
+            const remote = await detectGitRemote(directory);
+            res.json({ res: true, url: remote.url, remote: remote.remote });
+        } catch (error) {
+            fail(res, error);
+        }
+    });
+
+    // 拉取项目：把远程仓库 clone 到后端本机指定目录，返回路径与项目识别结果
+    projectRouter.post("/clone", async (req, res) => {
+        let destination = "";
+        try {
+            if (!isLoopbackRequest(req)) {
+                throw new ProjectError(403, "只能在运行后端的本机拉取项目");
+            }
+            const url = parseGitUrl(req.body?.url);
+            if (!url) throw new ProjectError(400, "请输入 Git 远程地址");
+            const targetRoot = resolveCloneTarget(req.body?.targetDir);
+            destination = path.join(targetRoot, deriveGitRepoName(url));
+            if (cloningTargets.has(destination)) {
+                throw new ProjectError(409, "该文件夹正在拉取中，请稍候");
+            }
+            cloningTargets.add(destination);
+            logInfo(`[projects] cloning ${url} -> ${destination}`);
+            const cloned = await cloneGitRepository(url, targetRoot);
+            logInfo(`[projects] cloned ${url} -> ${cloned.path}`);
+            res.json({ res: true, ...cloned });
+        } catch (error) {
+            fail(res, error);
+        } finally {
+            if (destination) cloningTargets.delete(destination);
+        }
+    });
+
     projectRouter.get("/", (_req, res) => {
         const rows = listProjectsStmt.all() as ProjectRow[];
         const commandMap = getCommandsMap();
@@ -2488,6 +2706,7 @@ export const registerProjectFeature = (
                     ? detection.commands
                     : parseRunCommands(req.body.commands);
             const intro = parseProjectIntro(req.body?.intro);
+            const gitUrl = parseGitUrl(req.body?.gitUrl);
             const links = parseProjectLinks(req.body?.links);
             const folder = parseProjectFolder(req.body?.folder);
             if (!name) throw new ProjectError(400, "请输入项目名称");
@@ -2502,6 +2721,7 @@ export const registerProjectFeature = (
                 startCommand,
                 folder,
                 intro,
+                gitUrl,
                 request.user?.userId ?? null,
                 commands,
                 links
@@ -2561,6 +2781,9 @@ export const registerProjectFeature = (
             const intro = req.body?.intro === undefined
                 ? null
                 : parseProjectIntro(req.body.intro);
+            const gitUrl = req.body?.gitUrl === undefined
+                ? null
+                : parseGitUrl(req.body.gitUrl);
             const links = req.body?.links === undefined
                 ? null
                 : parseProjectLinks(req.body.links);
@@ -2580,6 +2803,7 @@ export const registerProjectFeature = (
                 startCommand,
                 folder,
                 intro,
+                gitUrl,
                 commands,
                 links
             );
