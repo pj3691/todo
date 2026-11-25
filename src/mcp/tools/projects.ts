@@ -1,8 +1,8 @@
 /**
  * 项目管理工具（只读）。
  *
- * 刻意不暴露 start / stop / restart / 命令执行 / 端口 kill：
- * 那几项等于把任意命令执行能力交给调用方，必须由人工在页面或桌面端操作。
+ * 这里只有查询；启停拆在 project-control.ts，受 agent.projectControl 开关控制。
+ * 命令执行、端口 kill、项目配置写入永远不封装成工具。
  */
 import { defineTool, type ToolDefinition } from "../define-tool.js";
 import { asArray, asNumber, asRecord, asText } from "./format.js";
@@ -13,6 +13,23 @@ const rawText = (payload: unknown): string => {
   return text.length > 4000 ? `${text.slice(0, 4000)}\n…[已截断]` : text;
 };
 
+/**
+ * 精简行：只给定位一个项目所需的信息。
+ * 列表默认走这个，命令、路径、自定义命令都留到 verbose 才给——
+ * 十几个项目的完整信息动辄两千 token，全部塞进上下文会直接拉低缓存命中率。
+ */
+const projectBrief = (value: unknown): string => {
+  const project = asRecord(value);
+  const parts = [
+    `#${asText(project.id)} ${asText(project.name)}`,
+    asText(project.status) || "stopped",
+  ];
+  const pid = asNumber(project.pid);
+  if (pid !== null) parts.push(`pid ${pid}`);
+  return parts.join(" · ");
+};
+
+/** 完整行：仅在模型或用户明确要看细节时使用 */
 const projectLine = (value: unknown): string => {
   const project = asRecord(value);
   const parts = [
@@ -57,12 +74,19 @@ export const projectTools: ToolDefinition[] = [
     name: "gitstatus_project_list",
     title: "查询项目列表",
     description:
-      "列出项目管理中的全部项目（只读），包含运行状态、pid、启动命令、自定义命令与所属文件夹。"
-      + "这里只能看，不能启停项目。",
+      "列出项目管理中的项目。默认只返回 id、名称、状态与 pid，够用来定位项目；"
+      + "只有用户明确问启动命令、目录路径或自定义命令时才传 verbose=true。"
+      + "启停需要 gitstatus_project_start / stop / restart（受开关控制，仅管理员）。",
     readOnly: true,
     requiredRole: "readonly",
-    parameters: {},
-    async run(ctx) {
+    parameters: {
+      verbose: {
+        type: "boolean",
+        description: "返回启动命令、路径、文件夹与自定义命令；默认 false",
+      },
+    },
+    async run(ctx, args) {
+      const verbose = args.verbose === true;
       const payload = await ctx.api.get("/projects");
       const body = asRecord(payload);
       const projects = asArray(body.projects);
@@ -70,8 +94,16 @@ export const projectTools: ToolDefinition[] = [
       const lines =
         projects.length === 0
           ? ["还没有任何项目。"]
-          : [`共 ${projects.length} 个项目：`, ...projects.map((item) => `- ${projectLine(item)}`)];
-      if (folders.length > 0) {
+          : [
+              `共 ${projects.length} 个项目：`,
+              ...projects.map((item) =>
+                `- ${verbose ? projectLine(item) : projectBrief(item)}`,
+              ),
+            ];
+      if (!verbose && projects.length > 0) {
+        lines.push("（需要启动命令、路径或自定义命令时，传 verbose=true 再查一次）");
+      }
+      if (verbose && folders.length > 0) {
         lines.push(
           `文件夹：${folders.map((item) => asText(asRecord(item).name)).filter(Boolean).join("、")}`,
         );
@@ -108,7 +140,8 @@ export const projectTools: ToolDefinition[] = [
     name: "gitstatus_project_logs",
     title: "读取项目运行日志",
     description:
-      "读取某个项目当前运行实例的日志（只读）。可用 after 做增量拉取：传上次返回的 nextSeq。",
+      "读取某个项目当前运行实例的日志。可用 after 做增量拉取：传上次返回的 nextSeq。"
+      + "默认只回最后 40 条，够看启动过程；要更多再传 tail。",
     readOnly: true,
     requiredRole: "readonly",
     parameters: {
@@ -118,7 +151,7 @@ export const projectTools: ToolDefinition[] = [
     },
     async run(ctx, args) {
       const id = asNumber(args.id) ?? 0;
-      const tail = asNumber(args.tail) ?? 100;
+      const tail = asNumber(args.tail) ?? 40;
       const payload = await ctx.api.get(`/projects/${id}/logs`, {
         after: args.after,
       });
@@ -135,12 +168,12 @@ export const projectTools: ToolDefinition[] = [
     parameters: {
       id: { type: "integer", required: true, description: "项目 id" },
       runId: { type: "string", required: true, description: "运行记录 id" },
-      tail: { type: "integer", description: "只显示最后 N 条，默认 100" },
+      tail: { type: "integer", description: "只显示最后 N 条，默认 40" },
     },
     async run(ctx, args) {
       const id = asNumber(args.id) ?? 0;
       const runId = encodeURIComponent(asText(args.runId));
-      const tail = asNumber(args.tail) ?? 100;
+      const tail = asNumber(args.tail) ?? 40;
       const payload = await ctx.api.get(`/projects/${id}/runs/${runId}/logs`);
       return { text: renderLogs(payload, tail), structured: payload };
     },

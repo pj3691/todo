@@ -399,6 +399,98 @@ body {
     font-weight: 700;
 }
 
+/* ---------- 项目启停确认 ---------- */
+
+.confirm-card {
+    padding: 9px 10px;
+    border: 1px solid #f0d9a8;
+    border-radius: 9px;
+    background: var(--amber-soft);
+    font-size: 0.72rem;
+}
+
+.confirm-card.is-pending {
+    border-color: #e8c47a;
+    box-shadow: 0 0 0 3px rgba(232, 196, 122, 0.16);
+}
+
+.confirm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 5px;
+}
+
+.confirm-title {
+    color: var(--amber);
+    font-weight: 700;
+}
+
+.confirm-countdown {
+    flex: none;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.confirm-detail {
+    margin: 0 0 7px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.confirm-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text-soft);
+    font: inherit;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+.confirm-btn:hover:not(:disabled) {
+    background: var(--surface-muted);
+}
+
+.confirm-btn.is-primary {
+    border-color: var(--green);
+    background: var(--green);
+    color: #fff;
+}
+
+.confirm-btn.is-primary:hover:not(:disabled) {
+    background: var(--green-strong);
+}
+
+.confirm-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.confirm-card.is-approved .confirm-title {
+    color: var(--green);
+}
+
+.confirm-card.is-denied .confirm-title,
+.confirm-card.is-expired .confirm-title {
+    color: var(--muted);
+}
+
 /* ---------- 工具调用 ---------- */
 
 .msg-tools {

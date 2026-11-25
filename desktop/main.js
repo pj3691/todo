@@ -2541,6 +2541,15 @@ function registerIpc() {
         if (!senderIs(event, chatWin)) return { ok: false };
         return chatRequest("GET", `/sessions/${encodeURIComponent(String(id))}/stats`);
     });
+    // 项目启停的人工确认：工具在 SSE 请求里挂起，这里把「允许/拒绝」送回去
+    ipcMain.handle("chat:confirm", async (event, payload) => {
+        if (!senderIs(event, chatWin)) return { ok: false };
+        const sessionId = encodeURIComponent(String(payload?.sessionId ?? ""));
+        return chatRequest("POST", `/sessions/${sessionId}/confirm`, {
+            confirmId: String(payload?.confirmId ?? ""),
+            approved: payload?.approved === true
+        });
+    });
     ipcMain.handle("chat:delete", async (event, id) => {
         if (!senderIs(event, chatWin)) return { ok: false };
         return chatRequest("DELETE", `/sessions/${encodeURIComponent(String(id))}`);

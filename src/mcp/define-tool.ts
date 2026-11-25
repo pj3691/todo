@@ -43,12 +43,62 @@ export interface ChatAttachmentBridge {
   ): Promise<Array<{ id: number; name: string; ok: boolean; message: string }>>;
 }
 
+/**
+ * 工具被谁调用。
+ *
+ * 两个通道的可靠性不同：内置助手有人在页面上，可以做人工确认；
+ * MCP 客户端控制不了 UI，只能靠开关、白名单与角色门槛。审计里要能区分来源。
+ */
+export type ToolChannel = "web" | "mcp";
+
+/** 项目启停能力策略，未开启时相关工具根本不会注册 */
+export interface ProjectControlPolicy {
+  /** 允许操作的项目 id；空数组表示全部允许 */
+  allowedProjectIds: number[];
+  /** 每个项目每分钟允许的动作次数，防模型循环重启 */
+  maxActionsPerMinute: number;
+}
+
+/** 一次需要人工确认的项目动作 */
+export interface ConfirmRequest {
+  action: "start" | "stop" | "restart";
+  projectId: number;
+  projectName: string;
+  /** 启动命令原文，让用户看清将要执行什么 */
+  command: string;
+  /** 一句话标题，如「请求启动项目」 */
+  title: string;
+  /** 多行明细，含当前状态与命令 */
+  detail: string;
+}
+
+/** 审计条目：出问题时这是唯一的回溯依据 */
+export interface ToolAuditEntry {
+  channel: ToolChannel;
+  tool: string;
+  projectId: number;
+  projectName: string;
+  command: string;
+  /** ok / denied / error */
+  outcome: "ok" | "denied" | "error";
+  message: string;
+  durationMs: number;
+}
+
 export interface ToolContext {
   api: ApiClient;
   /** 当前密钥所属账号的角色 */
   role: UserRole;
+  /** 调用来源，默认 web */
+  channel?: ToolChannel;
   /** 仅在「AI 助手」页的对话中提供 */
   attachments?: ChatAttachmentBridge;
+  /** 项目启停策略；没有它说明能力未开启 */
+  projectControl?: ProjectControlPolicy;
+  /** 人工确认；只有内置助手提供，MCP 通道为空 */
+  confirm?: (request: ConfirmRequest) => Promise<boolean>;
+  /** 审计钩子 */
+  audit?: (entry: ToolAuditEntry) => void;
 }
 
 export interface ToolOutcome {

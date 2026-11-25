@@ -11,6 +11,12 @@
     "model": "deepseek-flash",
     "temperature": 0.3,
     "maxToolRounds": 6,
-    "timeoutMs": 60000
+    "timeoutMs": 60000,
+    "cacheGapMs": 2000
+  },
+  "agent": {
+    "projectControl": true,
+    "allowedProjectIds": [],
+    "maxActionsPerMinute": 3
   }
 }

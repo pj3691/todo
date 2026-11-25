@@ -165,11 +165,14 @@
         dom.foot.appendChild(node("span", "chat-foot-line", headLine));
         const totals = state.stats && state.stats.totals;
         if (totals && totals.requests > 0) {
+            // 取最近一轮：会话累计会被新会话的首轮全 miss 永久拉低
+            const latest = state.stats.latest;
+            const rate = latest && latest.rate !== null ? latest.rate : state.stats.cacheHitRate;
             dom.foot.appendChild(
                 node(
                     "span",
                     "chat-foot-usage",
-                    `${usageSummary(totals, state.stats.cacheHitRate)} · ${totals.requests} 次请求`
+                    `${usageSummary(totals, rate)} · ${totals.requests} 次请求`
                 )
             );
         }
@@ -319,6 +322,79 @@
         }
         details.append(summary, body);
         return { details, status, resultPre };
+    }
+
+    /**
+     * 项目启停的人工确认卡片。
+     *
+     * 服务端在启停工具执行前推 confirm_request 并挂起，
+     * 这里经主进程转发 /chat/sessions/:id/confirm 才能继续。
+     */
+    function buildConfirmCard(data, sessionId) {
+        const card = node("div", "confirm-card is-pending");
+        const head = node("div", "confirm-head");
+        const countdown = node("span", "confirm-countdown", "");
+        head.append(node("span", "confirm-title", String(data.title || "请求执行操作")), countdown);
+
+        const detail = document.createElement("pre");
+        detail.className = "confirm-detail";
+        detail.textContent = String(data.detail || "");
+
+        const actions = node("div", "confirm-actions");
+        const denyBtn = node("button", "confirm-btn", "拒绝");
+        const allowBtn = node("button", "confirm-btn is-primary", "允许执行");
+        denyBtn.type = "button";
+        allowBtn.type = "button";
+        actions.append(denyBtn, allowBtn);
+        card.append(head, detail, actions);
+
+        const timeoutMs = Math.max(5000, Number(data.timeoutMs) || 60000);
+        const deadline = Date.now() + timeoutMs;
+        let settled = false;
+        let timer = 0;
+
+        const finish = (state, label) => {
+            if (settled) return;
+            settled = true;
+            if (timer) global.clearInterval(timer);
+            card.classList.remove("is-pending");
+            card.classList.add(`is-${state}`);
+            countdown.textContent = label;
+            actions.remove();
+        };
+        const expire = () => finish("expired", "已失效");
+
+        const respond = async (approved) => {
+            denyBtn.disabled = true;
+            allowBtn.disabled = true;
+            countdown.textContent = "提交中…";
+            const result = await api.chatConfirm({
+                sessionId,
+                confirmId: data.confirmId,
+                approved
+            });
+            if (!result || result.ok === false) {
+                finish("expired", "已失效");
+                showNotice((result && result.message) || "确认失败", "error");
+                return;
+            }
+            finish(approved ? "approved" : "denied", approved ? "已允许" : "已拒绝");
+        };
+
+        allowBtn.addEventListener("click", () => void respond(true));
+        denyBtn.addEventListener("click", () => void respond(false));
+
+        timer = global.setInterval(() => {
+            const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            if (left <= 0) {
+                finish("expired", "已超时");
+                return;
+            }
+            countdown.textContent = `${left}s`;
+        }, 1000);
+        countdown.textContent = `${Math.ceil(timeoutMs / 1000)}s`;
+
+        return { node: card, expire };
     }
 
     function buildAssistantMessage(message) {
@@ -553,6 +629,8 @@
         updateComposer();
 
         const pending = new Map();
+        // 本轮仍在等待的确认卡片；流结束时统一置为失效
+        const confirmCards = [];
 
         const handleEvent = (payload) => {
             if (!payload) return;
@@ -583,6 +661,13 @@
                 card.status.textContent = data.isError ? "失败" : "完成";
                 card.resultPre.textContent = String(data.content || "");
                 card.details.open = Boolean(data.isError);
+                scrollToBottom(false);
+                return;
+            }
+            if (event === "confirm_request") {
+                const confirm = buildConfirmCard(data, sessionId);
+                confirmCards.push(confirm);
+                tools.appendChild(confirm.node);
                 scrollToBottom(false);
                 return;
             }
@@ -627,6 +712,8 @@
                 global.clearTimeout(paintTimer);
                 paintTimer = 0;
             }
+            // 流结束后还没点的确认一律失效，避免卡片还能点但服务端已经不等了
+            for (const confirm of confirmCards) confirm.expire();
             paintTarget = null;
             state.streaming = false;
             updateComposer();

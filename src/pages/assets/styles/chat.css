@@ -560,6 +560,68 @@ body.chat-body {
     animation: chat-blink 1s steps(2) infinite;
 }
 
+/* ---------- 项目启停确认 ---------- */
+
+.confirm-card {
+    padding: 10px 12px;
+    border: 1px solid #f0d9a8;
+    border-radius: 10px;
+    background: var(--amber-soft);
+    font-size: 0.75rem;
+}
+
+.confirm-card.is-pending {
+    border-color: #e8c47a;
+    box-shadow: 0 0 0 3px rgba(232, 196, 122, 0.16);
+}
+
+.confirm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.confirm-title {
+    color: var(--amber);
+    font-weight: 700;
+}
+
+.confirm-countdown {
+    flex: none;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.confirm-detail {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.confirm-card.is-approved .confirm-title {
+    color: var(--green);
+}
+
+.confirm-card.is-denied .confirm-title,
+.confirm-card.is-expired .confirm-title {
+    color: var(--muted);
+}
+
 /* ---------- 工具卡片 ---------- */
 
 .tool-card {

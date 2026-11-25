@@ -9,12 +9,19 @@
  * - GITSTATUS_API_KEY    必填，GitStatus 账号页创建的 API 密钥（gsk_ 开头）
  * - GITSTATUS_MCP_TIMEOUT_MS  单次调用超时，默认 20000
  * - GITSTATUS_MCP_READONLY    设为 1 时只注册只读工具
+ * - GITSTATUS_CONFIG_PATH     配置路径，默认 ./config/config.json
+ *
+ * 项目启停能力默认关闭。开启方式：config/config.json 的 `agent.projectControl` 设为 true，
+ * 或用 `GITSTATUS_AGENT_PROJECT_CONTROL=1` 为单个客户端单独授权；
+ * 还可用 `GITSTATUS_AGENT_ALLOWED_PROJECT_IDS=1,2` 限制可操作项目。
  */
+import path from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createApiClient } from "./api-client.js";
 import { ToolRegistry, type UserRole } from "./define-tool.js";
+import { readProjectControlConfig } from "./project-policy.js";
 import { createMcpServer } from "./server.js";
-import { allTools } from "./tools/index.js";
+import { allTools, gatedTools } from "./tools/index.js";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:30012";
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -83,18 +90,42 @@ const main = async (): Promise<void> => {
   }
 
   const registry = new ToolRegistry();
-  const tools = config.readOnlyMode
+  const baseTools = config.readOnlyMode
     ? allTools.filter((tool) => tool.readOnly)
     : allTools;
-  registry.add(...tools);
+  registry.add(...baseTools);
 
-  const server = createMcpServer({ registry, context: { api, role } });
+  /**
+   * 项目启停：开关、白名单、限流三层都在后端之外再拦一道。
+   * MCP 通道没有人工确认（控制不了客户端 UI），所以默认关闭尤其重要。
+   */
+  const projectControl = readProjectControlConfig({
+    configPath: process.env.GITSTATUS_CONFIG_PATH
+      ? path.resolve(process.env.GITSTATUS_CONFIG_PATH)
+      : path.resolve("config/config.json"),
+  });
+  if (projectControl.enabled && !config.readOnlyMode) {
+    registry.add(...gatedTools);
+  }
+
+  const context = projectControl.enabled && !config.readOnlyMode
+    ? {
+        api,
+        role,
+        channel: "mcp" as const,
+        projectControl: projectControl.policy,
+        audit: (entry: unknown) => log(`[audit] ${JSON.stringify(entry)}`),
+      }
+    : { api, role, channel: "mcp" as const };
+
+  const server = createMcpServer({ registry, context });
   await server.connect(new StdioServerTransport());
 
   log(
     `已连接 ${config.baseUrl} · 账号 ${username || "(未知)"} · 角色 ${role} · `
       + `${registry.visible(role).length}/${registry.size} 个工具可用`
-      + `${config.readOnlyMode ? " · 只读模式" : ""}`,
+      + `${config.readOnlyMode ? " · 只读模式" : ""}`
+      + ` · 项目启停 ${projectControl.enabled && !config.readOnlyMode ? projectControl.reason : "disabled"}`,
   );
 };
 

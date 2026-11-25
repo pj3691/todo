@@ -19,10 +19,12 @@ import { createApiClient } from "./mcp/api-client.js";
 import {
   ToolRegistry,
   type ChatAttachmentBridge,
+  type ConfirmRequest,
   type ToolContext,
   type UserRole,
 } from "./mcp/define-tool.js";
-import { allTools } from "./mcp/tools/index.js";
+import { readProjectControlConfig } from "./mcp/project-policy.js";
+import { allTools, gatedTools } from "./mcp/tools/index.js";
 import { formatLocalDate, weekdayOf } from "./mcp/tools/time.js";
 import { createLlmStore, type LlmConfig } from "./chat-llm.js";
 import {
@@ -109,6 +111,8 @@ type MessagePayload = {
   rounds?: LlmRound[];
   interrupted?: boolean;
   usage?: LlmUsage | null;
+  /** 每次模型请求的独立用量，用来定位「哪一轮开始不命中」 */
+  requests?: Array<LlmUsage & { round: number; contextTokens: number | null }>;
   /** 用户消息携带的附件快照，模型与页面都靠它拿到编号 */
   attachments?: ChatAttachmentRef[];
 };
@@ -140,6 +144,20 @@ type ChatAttachmentRef = {
 const TOOL_CONTENT_LIMIT = 8000;
 /** SSE 心跳间隔，防止长时间工具执行被中间层判为死连接 */
 const SSE_PING_MS = 15_000;
+/** 人工确认的最长等待：超时按拒绝处理，避免会话一直挂在一个工具调用上 */
+const CONFIRM_TIMEOUT_MS = 60_000;
+/**
+ * 工具轮次之间的最小间隔。
+ *
+ * DeepSeek 的前缀缓存是**异步写入**的：实测同一前缀 1 秒内重发命中 0%，
+ * 等 2 秒后命中 98%。而工具执行往往只要几十毫秒，紧接着发下一次请求
+ * 等于把上一轮的缓存白扔。所以上下文超过阈值后，两次请求至少隔这么久；
+ * 工具本身已经跑够时间的，就不再额外等待。
+ */
+const DEFAULT_CACHE_GAP_MS = 2000;
+/** 上下文小于这个规模时，miss 的代价很低，不值得为它加延迟 */
+const CACHE_GAP_MIN_CONTEXT_TOKENS = 8000;
+const CACHE_GAP_MAX_MS = 5000;
 /** 对话附件暂存目录：绑定到待办时由 todo 模块复制到自己的存储目录 */
 const CHAT_UPLOAD_DIR = path.resolve("./src/output/chat-uploads");
 const CHAT_ATTACH_MAX_FILES = 5;
@@ -157,13 +175,16 @@ const formatFileSize = (bytes: number): string => {
 const SYSTEM_PROMPT = [
   "你是 GitStatus 工作区的助手，可以调用工具读写当前账号的待办、分类、标签、共享关系，以及查看项目与运行日志。",
   "规则：",
-  "1. 需要事实时先调用工具，不要凭记忆或猜测回答。",
+  "1. 需要事实时先调用工具，不要凭记忆或猜测回答；账号与角色已在 system 里给出，不必为了确认权限调用 gitstatus_whoami（只有用户明确问「我是谁」时才用）。",
   "2. 修改或删除之前，先用查询工具确认目标（id 与标题），再执行；批量操作前说明影响范围。",
   "3. 只能访问当前账号有权限的数据。工具返回权限或不存在错误时如实告知，不要换一种说法重试。",
   "4. 回答用中文，简洁直接；涉及多条数据时用列表，不要复述工具的原始输出。",
   "5. 涉及「几小时后」「今天还剩多久」这类相对时间时，先调用 gitstatus_now 拿当前时刻，不要用登录时间或创建时间推算。",
-  "6. 你没有启动/停止项目、执行命令的权限，被问到这类请求时说明需要人工在项目管理页操作。",
-  "7. 用户消息带 [本条消息附带的文件] 清单时，如果要把这些文件一起存进待办，把对应编号填进 gitstatus_todo_create 或 gitstatus_todo_update 的 attachmentIds；不要编造编号，也不要把文件内容写进描述。",
+  "6. 你可以启停项目：调用 gitstatus_project_start / stop / restart，参数只能是项目 id。每一次启停都会先请用户在界面上确认，并展示将要执行的命令；被用户拒绝或超时后就停下来说明情况，不要换个工具再试。",
+  "7. 项目启停能力未开启时这三个工具不存在，被问到时说需要人工在项目管理页操作；自定义命令执行、端口结束、修改项目配置永远不在你的权限内。",
+  "8. 不要连续重复启动或重启同一个项目；重启后用 gitstatus_project_logs 看一段输出再决定下一步。",
+  "9. 用户消息带 [本条消息附带的文件] 清单时，如果要把这些文件一起存进待办，把对应编号填进 gitstatus_todo_create 或 gitstatus_todo_update 的 attachmentIds；不要编造编号，也不要把文件内容写进描述。",
+  "10. 查项目列表时先用默认的精简输出；只有用户问到启动命令、路径或自定义命令时才传 verbose=true。日志默认只回 40 条，够判断启动结果，不要为了「再确认一下」反复拉取。",
 ].join("\n");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -433,6 +454,64 @@ export const registerChatFeature = (
   const registry = new ToolRegistry();
   registry.add(...allTools);
 
+  // 项目启停是开关能力：未开启时不注册，tools/list 与模型上下文里都不会出现
+  const projectControl = readProjectControlConfig({ configPath });
+  if (projectControl.enabled) {
+    registry.add(...gatedTools);
+    logInfo(`[chat] project control ${projectControl.reason}`);
+  } else {
+    logInfo("[chat] project control disabled, gated tools not registered");
+  }
+
+  /**
+   * 工具轮次之间的缓存写入窗口。
+   * 优先级：环境变量 > config.json 的 llm.cacheGapMs > 默认 2 秒；设为 0 可关闭。
+   */
+  const cacheGapMs = (() => {
+    const fromEnv = Number(process.env.GITSTATUS_LLM_CACHE_GAP_MS);
+    if (Number.isFinite(fromEnv) && fromEnv >= 0) {
+      return Math.min(CACHE_GAP_MAX_MS, Math.round(fromEnv));
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
+      if (isRecord(parsed) && isRecord(parsed.llm)) {
+        const raw = Number(parsed.llm.cacheGapMs);
+        if (Number.isFinite(raw) && raw >= 0) {
+          return Math.min(CACHE_GAP_MAX_MS, Math.round(raw));
+        }
+      }
+    } catch {
+      /* 配置缺失或格式错误时用默认值 */
+    }
+    return DEFAULT_CACHE_GAP_MS;
+  })();
+  logInfo(
+    `[chat] cache gap ${cacheGapMs}ms`
+      + ` (only when context >= ${CACHE_GAP_MIN_CONTEXT_TOKENS} tokens)`,
+  );
+
+  /**
+   * 待确认的项目动作。
+   *
+   * 工具执行到启停时会在这里挂起等待，用户在页面上点「允许/拒绝」后
+   * 由另一个 HTTP 请求唤醒；超时或连接断开一律按拒绝处理。
+   */
+  type PendingConfirm = {
+    sessionId: string;
+    userId: number;
+    settle: (approved: boolean) => void;
+  };
+  const pendingConfirms = new Map<string, PendingConfirm>();
+
+  /** 结束某个会话遗留的等待，断连与中断都走这里 */
+  const cancelConfirmsOfSession = (sessionId: string): void => {
+    for (const [confirmId, entry] of [...pendingConfirms]) {
+      if (entry.sessionId !== sessionId) continue;
+      entry.settle(false);
+      pendingConfirms.delete(confirmId);
+    }
+  };
+
   const buildOpenAiTools = (role: UserRole) =>
     registry.visible(role).map((tool) => ({
       type: "function" as const,
@@ -472,15 +551,25 @@ export const registerChatFeature = (
   };
 
   /** 用已落库的消息重建 OpenAI 上下文 */
-  const buildMessages = (sessionId: string): Array<Record<string, unknown>> => {
+  const buildMessages = (
+    sessionId: string,
+    identity: { username: string; role: UserRole },
+  ): Array<Record<string, unknown>> => {
     // system 是前缀缓存的最开头，必须逐字节稳定：
     // 之前这里拼了精确到秒的时间，导致每轮请求的缓存从第一个字就失效，命中率恒为 0。
     // 因此只放日期（每天变一次），精确时刻交给 gitstatus_now 工具。
     const now = new Date();
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
     const dateLine = `今天是 ${formatLocalDate(now)}（${weekdayOf(now)}），时区 ${timeZone}。需要精确到分钟的时刻时调用 gitstatus_now。`;
+    // 账号与角色也写进 system：同一会话内稳定，且省掉一次 whoami 往返；
+    // 少一次请求就少一次缓存断裂。角色变更会让本会话失效一次，代价可接受。
+    const roleLabel =
+      identity.role === "admin" ? "管理员" : identity.role === "readwrite" ? "读写" : "只读";
+    const identityLine = identity.username
+      ? `当前登录账号：${identity.username}（${roleLabel}，role=${identity.role}）。`
+      : `当前账号角色：${roleLabel}（role=${identity.role}）。`;
     const messages: Array<Record<string, unknown>> = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n${dateLine}` },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\n${identityLine}${dateLine}` },
     ];
     const rows = listMessagesStmt.all(sessionId) as ChatMessageRow[];
 
@@ -1013,20 +1102,76 @@ export const registerChatFeature = (
       cacheWriteTokens: 0,
       requests: 0,
     };
+
+    /**
+     * 最近一次模型请求的命中率。
+     *
+     * 会话累计会被「首轮全 miss」永久拉低（新会话第一次请求要把 system 与工具定义写进缓存），
+     * 而且改一次 system / 工具定义就会重新交一次入场费。
+     * 看「现在缓存工作得好不好」应该看最近一轮，累计值放明细里备查。
+     */
+    let latest: { rate: number | null; contextTokens: number | null; at: string } | null = null;
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const row = rows[i];
+      if (!row || row.role !== "assistant") continue;
+      const payload = parseMessagePayload(row.payload);
+      const list = Array.isArray(payload.requests) ? payload.requests : [];
+      const last = list[list.length - 1];
+      if (!last) continue;
+      latest = {
+        rate: usageCacheHitRate(last),
+        contextTokens: last.contextTokens ?? usageContextTokens(last),
+        at: row.created_at,
+      };
+      break;
+    }
+
     res.json({
       res: true,
       stats: {
         totals: { ...totalUsage, contextTokens: usageContextTokens(totalUsage) },
         cacheHitRate: usageCacheHitRate(totalUsage),
+        latest,
         turns,
       },
     });
   });
 
+  /**
+   * 回应一次人工确认。
+   *
+   * 启停工具在 SSE 请求里挂起等待，这里只负责把「允许 / 拒绝」送回去。
+   * 校验会话归属，且 confirmId 必须属于该会话，防止跨会话抢先确认。
+   */
+  chatRouter.post("/sessions/:id/confirm", (req, res) => {
+    const user = (req as express.Request & { user?: { userId: number } }).user;
+    const userId = user?.userId ?? 0;
+    const sessionId = String(req.params.id);
+    const session = getSessionStmt.get(sessionId, userId) as ChatSessionRow | undefined;
+    if (!session) {
+      res.status(404).json({ res: false, message: "session not found" });
+      return;
+    }
+
+    const body = (req.body ?? {}) as { confirmId?: unknown; approved?: unknown };
+    const confirmId = String(body.confirmId ?? "");
+    const entry = pendingConfirms.get(confirmId);
+    if (!entry || entry.sessionId !== sessionId || entry.userId !== userId) {
+      res.status(404).json({ res: false, message: "确认请求已失效或已处理" });
+      return;
+    }
+
+    entry.settle(body.approved === true);
+    res.json({ res: true, approved: body.approved === true });
+  });
+
   /** 发一条用户消息并跑完整轮次，SSE 推送 */
   chatRouter.post("/sessions/:id/messages", async (req, res) => {
-    const user = (req as express.Request & { user?: { userId: number; role: UserRole } }).user;
+    const user = (req as express.Request & {
+      user?: { userId: number; username?: string; role: UserRole };
+    }).user;
     const userId = user?.userId ?? 0;
+    const username = String(user?.username ?? "");
     const role: UserRole = user?.role ?? "readonly";
     const sessionId = String(req.params.id);
     const body = (req.body ?? {}) as { content?: unknown; attachmentIds?: unknown };
@@ -1111,6 +1256,8 @@ export const registerChatFeature = (
     // 必须监听响应而不是 req：req 的 close 在请求体读完就会触发，会把正常请求误判成断开
     res.on("close", () => {
       if (!finished) controller.abort();
+      // 连接断了就没人能点确认，让挂起的启停立即失败
+      cancelConfirmsOfSession(sessionId);
     });
     const ping = setInterval(() => {
       if (!res.writableEnded) res.write(": ping\n\n");
@@ -1122,6 +1269,37 @@ export const registerChatFeature = (
       apiKey: tokenOf(req),
       timeoutMs: 30_000,
     });
+
+    // 启停类工具在这里挂起，等用户在页面上点「允许 / 拒绝」
+    const confirmBridge = (request: ConfirmRequest): Promise<boolean> => {
+      if (controller.signal.aborted) return Promise.resolve(false);
+      const confirmId = crypto.randomUUID();
+      return new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingConfirms.delete(confirmId);
+          resolve(false);
+        }, CONFIRM_TIMEOUT_MS);
+        pendingConfirms.set(confirmId, {
+          sessionId,
+          userId,
+          settle(approved) {
+            clearTimeout(timer);
+            pendingConfirms.delete(confirmId);
+            resolve(approved);
+          },
+        });
+        send("confirm_request", {
+          confirmId,
+          action: request.action,
+          projectId: request.projectId,
+          projectName: request.projectName,
+          command: request.command,
+          title: request.title,
+          detail: request.detail,
+          timeoutMs: CONFIRM_TIMEOUT_MS,
+        });
+      });
+    };
 
     // 本会话还没绑到待办的附件，模型只能引用这些编号
     const pendingRows = listPendingAttachmentsStmt.all(sessionId, userId) as ChatAttachmentRow[];
@@ -1193,9 +1371,25 @@ export const registerChatFeature = (
       },
     };
 
-    const toolContext: ToolContext = { api, role, attachments: attachmentBridge };
+    // 有确认桥时必须先过用户这一关；MCP 通道没有这个能力，靠开关与角色兜底
+    const toolContext: ToolContext = projectControl.enabled
+      ? {
+          api,
+          role,
+          channel: "web",
+          attachments: attachmentBridge,
+          projectControl: projectControl.policy,
+          confirm: confirmBridge,
+          audit: (entry) => logInfo(`[chat][audit] ${JSON.stringify(entry)}`),
+        }
+      : {
+          api,
+          role,
+          channel: "web",
+          attachments: attachmentBridge,
+        };
     const tools = buildOpenAiTools(role);
-    const messages = buildMessages(sessionId);
+    const messages = buildMessages(sessionId, { username, role });
 
     const storedCalls: StoredToolCall[] = [];
     // 按轮记录消息结构，与请求时的序列一一对应；重建上下文靠它保持前缀稳定
@@ -1203,9 +1397,35 @@ export const registerChatFeature = (
     let answer = "";
     let usage: LlmStreamResult["usage"] = null;
     let interrupted = false;
+    // 逐次请求用量：合并后的 usage 看不出「哪一次没命中」
+    const requestUsage: Array<LlmUsage & { round: number; contextTokens: number | null }> = [];
+    // 缓存就绪等待需要两个量：上一次请求结束时间、它当时的上下文规模
+    let lastRoundEndedAt = 0;
+    let lastContextTokens = 0;
+
+    /** 工具轮次之间留出缓存写入窗口；工具本身跑够时间就不等 */
+    const waitForCacheWindow = (): Promise<void> => {
+      if (cacheGapMs <= 0) return Promise.resolve();
+      if (lastContextTokens < CACHE_GAP_MIN_CONTEXT_TOKENS) return Promise.resolve();
+      const wait = cacheGapMs - (Date.now() - lastRoundEndedAt);
+      if (wait <= 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const done = (): void => {
+          clearTimeout(timer);
+          controller.signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, wait);
+        // 等待期间用户点了停止：立刻退出，不要拖着不结束
+        if (controller.signal.aborted) done();
+        else controller.signal.addEventListener("abort", done, { once: true });
+      });
+    };
 
     try {
       for (let round = 0; round < config.maxToolRounds; round += 1) {
+        // 上一轮请求刚结束、缓存还没落盘时发下一条，等于白扔整段前缀
+        if (round > 0) await waitForCacheWindow();
         const result = await callLlm(
           config,
           messages,
@@ -1213,9 +1433,18 @@ export const registerChatFeature = (
           (text) => send("delta", { text }),
           AbortSignal.any([controller.signal, AbortSignal.timeout(config.timeoutMs)]),
         );
+        lastRoundEndedAt = Date.now();
         answer += result.content;
         // 工具循环会对同一个问题多次请求模型，每次都要算进去；覆盖会丢掉前几轮的输入
-        if (result.usage) usage = mergeUsage(usage, result.usage);
+        if (result.usage) {
+          usage = mergeUsage(usage, result.usage);
+          lastContextTokens = usageContextTokens(result.usage) ?? lastContextTokens;
+          requestUsage.push({
+            round,
+            ...result.usage,
+            contextTokens: usageContextTokens(result.usage),
+          });
+        }
 
         if (result.toolCalls.length === 0) {
           // 最终回答也要单独记一轮：下一轮重建时模型得知道自己上一轮说了什么
@@ -1287,7 +1516,7 @@ export const registerChatFeature = (
         sessionId,
         "assistant",
         answer,
-        JSON.stringify({ toolCalls: storedCalls, rounds, interrupted, usage } satisfies MessagePayload),
+        JSON.stringify({ toolCalls: storedCalls, rounds, interrupted, usage, requests: requestUsage } satisfies MessagePayload),
       ).lastInsertRowid;
       touchSessionStmt.run(sessionId);
       send("done", {

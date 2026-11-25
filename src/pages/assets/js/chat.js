@@ -401,6 +401,87 @@
         return { details, status, resultPre, resultSection };
     }
 
+    /**
+     * 项目启停的人工确认卡片。
+     *
+     * 服务端在执行启停工具前会推一条 confirm_request 并挂起等待；
+     * 这里把「允许 / 拒绝」送回确认接口，工具才能继续往下走。
+     */
+    function buildConfirmCard(data, sessionId) {
+        const card = node("div", "confirm-card is-pending");
+        const head = node("div", "confirm-head");
+        const countdown = node("span", "confirm-countdown", "");
+        head.append(node("span", "confirm-title", String(data.title || "请求执行操作")), countdown);
+
+        const detail = document.createElement("pre");
+        detail.className = "confirm-detail";
+        detail.textContent = String(data.detail || "");
+
+        const actions = node("div", "confirm-actions");
+        const denyBtn = node("button", "btn btn-muted", "拒绝");
+        const allowBtn = node("button", "btn btn-primary", "允许执行");
+        denyBtn.type = "button";
+        allowBtn.type = "button";
+        actions.append(denyBtn, allowBtn);
+        card.append(head, detail, actions);
+
+        const timeoutMs = Math.max(5000, Number(data.timeoutMs) || 60000);
+        const deadline = Date.now() + timeoutMs;
+        let settled = false;
+        let timer = 0;
+
+        const finish = (state, label) => {
+            if (settled) return;
+            settled = true;
+            if (timer) window.clearInterval(timer);
+            card.classList.remove("is-pending");
+            card.classList.add(`is-${state}`);
+            countdown.textContent = label;
+            actions.remove();
+        };
+        const expire = () => finish("expired", "已失效");
+
+        const respond = async (approved) => {
+            denyBtn.disabled = true;
+            allowBtn.disabled = true;
+            countdown.textContent = "提交中…";
+            try {
+                const response = await Auth.apiFetch(
+                    `/chat/sessions/${encodeURIComponent(sessionId)}/confirm`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ confirmId: data.confirmId, approved }),
+                    },
+                );
+                if (!response.ok) {
+                    const json = await Auth.parseJson(response);
+                    throw new Error(json.message || `确认失败（${response.status}）`);
+                }
+                finish(approved ? "approved" : "denied", approved ? "已允许" : "已拒绝");
+            } catch (error) {
+                // 服务端可能已超时或连接已断，不能再让用户重复点
+                finish("expired", "已失效");
+                showNotice(error.message || "确认失败", "error");
+            }
+        };
+
+        allowBtn.addEventListener("click", () => void respond(true));
+        denyBtn.addEventListener("click", () => void respond(false));
+
+        timer = window.setInterval(() => {
+            const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            if (left <= 0) {
+                finish("expired", "已超时");
+                return;
+            }
+            countdown.textContent = `${left}s`;
+        }, 1000);
+        countdown.textContent = `${Math.ceil(timeoutMs / 1000)}s`;
+
+        return { node: card, expire };
+    }
+
     function buildUserMessage(content, attachments) {
         const wrap = node("div", "msg is-user");
         wrap.append(node("span", "msg-role", "我"));
@@ -472,11 +553,14 @@
 
         // 第二行是可点击的用量摘要，点开看逐轮明细
         const totals = state.stats && state.stats.totals;
+        // 底部取「最近一轮」：会话累计会被首轮全 miss 永久拉低，看起来总像没命中
+        const latest = state.stats.latest;
+        const footRate = latest && latest.rate !== null ? latest.rate : state.stats.cacheHitRate;
         const usageLine = node("button", "chat-foot-usage");
         usageLine.type = "button";
         if (totals && totals.requests > 0) {
-            usageLine.textContent = `${usageSummary(totals, state.stats.cacheHitRate)} · ${totals.requests} 次请求`;
-            usageLine.title = "查看本会话的 token 消耗与逐轮明细";
+            usageLine.textContent = `${usageSummary(totals, footRate)} · ${totals.requests} 次请求`;
+            usageLine.title = "命中率取最近一轮；点击查看累计与逐轮明细";
             usageLine.addEventListener("click", () => openStatsModal());
         } else {
             usageLine.textContent = "本会话暂无消耗";
@@ -553,8 +637,13 @@
         summary.append(
             cell("上下文 token", formatTokens(totals.contextTokens)),
             cell("输出 token", formatTokens(totals.outputTokens)),
-            cell("缓存命中率", formatRate(stats.cacheHitRate)),
+            cell(
+                "命中（最近一轮）",
+                formatRate(stats.latest && stats.latest.rate !== null ? stats.latest.rate : null),
+            ),
+            cell("命中（累计）", formatRate(stats.cacheHitRate)),
             cell("请求次数", `${totals.requests} 次`),
+            cell("最近请求", stats.latest ? String(stats.latest.at || "").slice(11, 16) : "—"),
         );
         dom.statsBody.appendChild(summary);
 
@@ -936,6 +1025,8 @@
         scrollToBottom(true);
 
         const pending = new Map();
+        // 本轮仍然挂着等待的确认卡片；流结束时统一置为失效
+        const confirmCards = [];
         let textBuffer = "";
         let finished = false;
         let paintedAt = 0;
@@ -1013,6 +1104,13 @@
                     scrollToBottom(false);
                     return;
                 }
+                if (event === "confirm_request") {
+                    const confirm = buildConfirmCard(data, sessionId);
+                    confirmCards.push(confirm);
+                    tools.appendChild(confirm.node);
+                    scrollToBottom(false);
+                    return;
+                }
                 if (event === "done") {
                     finished = true;
                     bubble.classList.remove("is-pending");
@@ -1071,6 +1169,8 @@
                 window.clearTimeout(paintTimer);
                 paintTimer = 0;
             }
+            // 流结束（含中断）后还没点的确认一律失效，避免留下能点但服务端已不等的卡片
+            for (const confirm of confirmCards) confirm.expire();
             state.streaming = false;
             state.controller = null;
             updateComposerState();
