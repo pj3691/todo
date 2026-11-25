@@ -24,3 +24,9 @@ src/tools/gltfpack.exe
 # Research 参考项目目录（第三方开源项目克隆与学习资料，不入库）
 # 包含：ToolRAG、MCP-Zero、deepseek-harness、MCP-Chinese-Getting-Started-Guide
 research/
+
+# 私人文档：不作为项目文档入库
+docs/论文概括-2025定日MW7.0地震共轭正断层发震.md
+docs/云存储方案与成本说明.md
+docs/自托管方案与实施步骤.md
+docs/自托管实施清单.md
